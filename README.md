@@ -115,7 +115,7 @@ Scalar metrics are also writting as JSONL files.
 This repository contains a reimplementation of DreamerV3 based on the open
 source DreamerV2 code base. It is unrelated to Google or DeepMind. The
 implementation has been tested to reproduce the official results on a range of
-environments.
+environments .
 
 [jax]: https://github.com/google/jax#pip-installation-gpu-cuda
 [paper]: https://arxiv.org/pdf/2301.04104
