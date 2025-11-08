@@ -108,8 +108,20 @@ def extract_rosbag(bag_path, topics, hz=10.0):
         else:
             continue
 
-        interp = interp1d(ts, vals, axis=0, bounds_error=False,
-                          fill_value="extrapolate", kind="linear")
+        if key in ["gripper_state", "contact"]:
+            # Discrete binary signal: nearest neighbor, no extrapolation beyond last sample
+            vals = (vals > 0.5).astype(float)
+            interp_kind = "nearest"
+            interp = interp1d(
+                ts, vals, axis=0, bounds_error=False,
+                fill_value=(vals[0], vals[-1]), kind=interp_kind
+            )
+        else:
+            interp = interp1d(
+                ts, vals, axis=0, bounds_error=False,
+                fill_value="extrapolate", kind="linear"
+            )
+
         obs[key] = interp(t_uniform)
 
     # --- Compute actions ---

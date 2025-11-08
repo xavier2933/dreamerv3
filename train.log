@@ -5,13 +5,29 @@
 Replica: 0 / 1
 Logdir: logs/arm_test
 Run script: train
+[INFO] Loading demo from: /home/xavie/dreamer/dreamerv3/data/demos/demo1
+  Loaded 527 timesteps, total reward: 459.54
+[INFO] Loading demo from: /home/xavie/dreamer/dreamerv3/data/demos/demo2
+  Loaded 288 timesteps, total reward: -933.05
+[INFO] Loading demo from: /home/xavie/dreamer/dreamerv3/data/demos/demo4
+  Loaded 747 timesteps, total reward: 294.81
+[INFO] Loaded 3 episodes with 1562 total timesteps
+[INFO] Episode lengths: min=288, max=747, mean=520.7
+[INFO] Total reward: -178.70
+[INFO] Observation spaces:
+  arm_joints: Space(float32, shape=(9,), low=-inf, high=inf)
+  block_pose: Space(float32, shape=(7,), low=-inf, high=inf)
+  target_pose: Space(float32, shape=(7,), low=-inf, high=inf)
+  wrist_angle: Space(float32, shape=(1,), low=-inf, high=inf)
+  gripper_state: Space(float32, shape=(1,), low=-inf, high=inf)
+  contact: Space(float32, shape=(1,), low=-inf, high=inf)
 Observations
-  arm_joints       Space(float32, shape=(), low=-inf, high=inf)
-  block_pose       Space(float32, shape=(), low=-inf, high=inf)
-  target_pose      Space(float32, shape=(), low=-inf, high=inf)
-  wrist_angle      Space(float32, shape=(), low=-inf, high=inf)
-  gripper_state    Space(float32, shape=(), low=-inf, high=inf)
-  contact          Space(float32, shape=(), low=-inf, high=inf)
+  arm_joints       Space(float32, shape=(9,), low=-inf, high=inf)
+  block_pose       Space(float32, shape=(7,), low=-inf, high=inf)
+  target_pose      Space(float32, shape=(7,), low=-inf, high=inf)
+  wrist_angle      Space(float32, shape=(1,), low=-inf, high=inf)
+  gripper_state    Space(float32, shape=(1,), low=-inf, high=inf)
+  contact          Space(float32, shape=(1,), low=-inf, high=inf)
   reward           Space(float32, shape=(), low=-inf, high=inf)
   is_first         Space(bool, shape=(), low=False, high=True)
   is_last          Space(bool, shape=(), low=False, high=True)
@@ -27,14 +43,14 @@ JAX devices (1): [cuda:0]
 Policy devices: cuda:0
 Train devices:  cuda:0
 Initializing parameters...
-Optimizer opt has 638,351 params:
+Optimizer opt has 640,931 params:
        364,352 dyn
         66,111 val
         57,663 rew
+        51,226 dec
         50,186 pol
-        49,926 dec
         41,153 con
-         8,960 enc
+        10,240 enc
 [1]
 [0]
 [1]
@@ -1458,6 +1474,8 @@ dec/mlp/linear2/kernel
 dec/mlp/norm0/scale
 [2]
 [1]
+2025-11-08 14:33:19.382348: E external/xla/xla/python/profiler/internal/python_hooks.cc:400] Can't import tensorflow.python.profiler.trace
+2025-11-08 14:33:22.495306: E external/xla/xla/python/profiler/internal/python_hooks.cc:400] Can't import tensorflow.python.profiler.trace
 dec/mlp/norm1/scale
 [2]
 [1]
@@ -1696,45 +1714,53 @@ val/mlp/norm2/scale
 [3]
 .count
 Train cost analysis:
-  FLOPS:            1.8e+09
-  Memory (temp):    2.4e+07
-  Memory (inputs):  8.3e+06
-  Memory (outputs): 8.1e+06
-  Memory (code):    2.2e+06
+  FLOPS:            7.3e+09
+  Memory (temp):    9.1e+07
+  Memory (inputs):  9.4e+06
+  Memory (outputs): 8.6e+06
+  Memory (code):    2.8e+06
 
 Report cost analysis:
-  FLOPS:            2.0e+06
-  Memory (temp):    6.2e+05
-  Memory (inputs):  1.5e+06
-  Memory (outputs): 1.0e+04
-  Memory (code):    1.2e+05
+  FLOPS:            6.7e+06
+  Memory (temp):    7.3e+05
+  Memory (inputs):  2.1e+06
+  Memory (outputs): 2.1e+04
+  Memory (code):    1.1e+05
 
 Done compiling!
+[INFO] Loading demo from: /home/xavie/dreamer/dreamerv3/data/demos/demo1
+  Loaded 527 timesteps, total reward: 459.54
+[INFO] Loading demo from: /home/xavie/dreamer/dreamerv3/data/demos/demo2
+  Loaded 288 timesteps, total reward: -933.05
+[INFO] Loading demo from: /home/xavie/dreamer/dreamerv3/data/demos/demo4
+  Loaded 747 timesteps, total reward: 294.81
+[INFO] Loaded 3 episodes with 1562 total timesteps
+[INFO] Episode lengths: min=288, max=747, mean=520.7
+[INFO] Total reward: -178.70
+[INFO] Observation spaces:
+  arm_joints: Space(float32, shape=(9,), low=-inf, high=inf)
+  block_pose: Space(float32, shape=(7,), low=-inf, high=inf)
+  target_pose: Space(float32, shape=(7,), low=-inf, high=inf)
+  wrist_angle: Space(float32, shape=(1,), low=-inf, high=inf)
+  gripper_state: Space(float32, shape=(1,), low=-inf, high=inf)
+  contact: Space(float32, shape=(1,), low=-inf, high=inf)
 Found existing checkpoint.
-Loading checkpoint: logs/arm_test/ckpt/20251107T221322F509768
+Loading checkpoint: logs/arm_test/ckpt/20251108T143003F952977
 Loaded checkpoint.
 Start training loop
-Traceback (most recent call last):
-  File "/home/xavie/dreamer/dreamerv3/dreamerv3/main.py", line 277, in <module>
-    main()
-  File "/home/xavie/dreamer/dreamerv3/dreamerv3/main.py", line 69, in main
-    embodied.run.train(
-  File "/home/xavie/dreamer/dreamerv3/embodied/run/train.py", line 97, in train
-    driver(policy, steps=10)
-  File "/home/xavie/dreamer/dreamerv3/embodied/core/driver.py", line 54, in __call__
-    step, episode = self._step(policy, step, episode)
-                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/home/xavie/dreamer/dreamerv3/embodied/core/driver.py", line 65, in _step
-    obs = [env.step(act) for env, act in zip(self.envs, acts)]
-          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/home/xavie/dreamer/dreamerv3/embodied/core/driver.py", line 65, in <listcomp>
-    obs = [env.step(act) for env, act in zip(self.envs, acts)]
-           ^^^^^^^^^^^^^
-  File "/home/xavie/dreamer/dreamerv3/embodied/core/wrappers.py", line 86, in step
-    return self.env.step({**action, self._key: clipped})
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/home/xavie/dreamer/dreamerv3/embodied/core/wrappers.py", line 256, in step
-    self._check(value, self.env.obs_space[key], key)
-  File "/home/xavie/dreamer/dreamerv3/embodied/core/wrappers.py", line 268, in _check
-    raise ValueError(
-ValueError: Value for 'arm_joints' with dtype float32, shape (9,), lowest -2.380150556564331, highest 2.6299915313720703 is not in Space(float32, shape=(), low=-inf, high=inf).
+Start JAX profiler: logs/arm_test
+Stop JAX profiler
+
+--------------------[Agent Step 9_380]--------------------
+Metrics filtered by: 'score|length|fps|ratio|train/loss/|train/rand/'
+episode/score 286.64 / episode/length 748 / train/loss/arm_joints 3.23 / train/loss/block_pose 1.78 / train/loss/con 0.32 / train/loss/contact 1.76 / train/loss/dyn 3.46 / train/loss/gripper_state 4.34 / train/loss/policy -1.95 / train/loss/rep 3.46 / train/loss/repval 10.59 / train/loss/rew 5.3 / train/loss/target_pose 1.24 / train/loss/value 3.51 / train/loss/wrist_angle 8.41 / replay/replay_ratio 31.29 / fps/policy 92.41 / fps/train 2789.33
+
+Writing metrics: logs/arm_test/metrics.jsonl
+Writing metrics: logs/arm_test/scores.jsonl
+
+--------------------[Agent Step 9_679]--------------------
+Metrics filtered by: 'score|length|fps|ratio|train/loss/|train/rand/'
+episode/score -994.66 / episode/length 289
+
+Writing metrics: logs/arm_test/metrics.jsonl
+Writing metrics: logs/arm_test/scores.jsonl

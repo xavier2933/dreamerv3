@@ -63,14 +63,14 @@ agent:
   valnorm: {impl: none, limit: 1e-08, rate: 0.01}
   value: {act: silu, bins: 255, layers: 3, norm: rms, output: symexp_twohot, outscale: 0.0,
     units: 64, winit: trunc_normal_in}
-batch_length: 16
-batch_size: 8
+batch_length: 32
+batch_size: 16
 clock_addr: ''
 clock_port: ''
 consec_report: 1
 consec_train: 1
 env:
-  arm: {data_dir: /home/xavie/dreamer/dreamerv3/data/demos/demo1/, episode_length: None}
+  arm: {data_dir: /home/xavie/dreamer/dreamerv3/data/demos/, episode_length: none}
   atari:
     actions: all
     aggregate: max
@@ -151,11 +151,11 @@ replay:
   prio: {exponent: 0.8, initial: inf, maxfrac: 0.5, zero_on_sample: true}
   priosignal: model
   recexp: 1.0
-  size: 5000.0
+  size: 10000.0
 replay_context: 1
 replica: 0
 replicas: 1
-report_length: 8
+report_length: 16
 run:
   actor_addr: localhost:{auto}
   actor_batch: -1
@@ -168,16 +168,16 @@ run:
   eval_envs: 0
   eval_eps: 0
   from_checkpoint: ''
-  log_every: 50
+  log_every: 100
   logger_addr: localhost:{auto}
   remote_envs: false
   remote_replay: false
   replay_addr: localhost:{auto}
   report_batches: 1
-  report_every: 200
-  save_every: 1000
-  steps: 5000.0
-  train_ratio: 16.0
+  report_every: 500
+  save_every: 2000
+  steps: 10000.0
+  train_ratio: 32.0
   usage: {gc: false, gputil: false, malloc: false, nvsmi: true, psutil: true}
 script: train
 seed: 0
