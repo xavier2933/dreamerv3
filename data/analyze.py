@@ -73,8 +73,12 @@ def analyze_dataset(data_dir):
         plot_series(obs["wrist_angle"], "Wrist Angle", "wrist_angle.png")
     if "gripper_state" in obs:
         plot_series(obs["gripper_state"], "Gripper Command", "gripper_state.png")
+    if "left_contact" in obs:
+        plot_series(obs["left_contact"], "Left Contact Detected", "left_contact.png")
+    if "right_contact" in obs:
+        plot_series(obs["right_contact"], "Right Contact Detected", "right_contact.png")
     if "contact" in obs:
-        plot_series(obs["contact"], "Contact Detected", "contact.png")
+        plot_series(obs["contact"], "Combined Contact (Reward)", "contact_combined.png")
     plot_series(actions, "Actions", "actions.png")
     if rewards is not None:
         plot_series(rewards, "Rewards", "rewards.png")
