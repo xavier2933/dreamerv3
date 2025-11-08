@@ -135,8 +135,12 @@ def extract_rosbag(bag_path, topics, hz=10.0):
     max_abs[max_abs == 0] = 1.0
     actions /= max_abs
 
-    rewards = obs.get("contact", np.zeros((len(t_uniform), 1)))
-
+    # --- Merge contact signals ---
+    left_contact = obs.get("left_contact", np.zeros((len(t_uniform), 1)))
+    right_contact = obs.get("right_contact", np.zeros((len(t_uniform), 1)))
+    contact = np.maximum(left_contact, right_contact)
+    obs["contact"] = contact
+    rewards = contact  # for training reward
     return t_uniform, obs, actions, rewards
 
 
@@ -157,11 +161,12 @@ if __name__ == "__main__":
 
     topics = {
         "arm_joints": "/joint_states",
-        "block_pose": "/block_pose",  # Pose type
-        "target_pose": "/unity_target_pose",  # FIXED name
+        "block_pose": "/block_pose",
+        "target_pose": "/unity_target_pose",
         "wrist_angle": "/wrist_angle",
         "gripper_state": "/gripper_command",
-        "contact": "/contact_detected",
+        "left_contact": "/left_contact_detected",
+        "right_contact": "/right_contact_detected",
     }
 
 
