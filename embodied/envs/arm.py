@@ -10,7 +10,7 @@ class Arm(embodied.Env):
     Uses preprocessed numpy arrays derived from ROS bag data.
     """
 
-    def __init__(self, data_dir, episode_length=None):
+    def __init__(self, task, data_dir='offline', episode_length=None):
         """
         Args:
             data_dir: path containing npz or npy arrays, e.g.:
