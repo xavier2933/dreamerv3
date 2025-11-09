@@ -3,6 +3,8 @@ import glob
 import numpy as np
 import elements
 import embodied
+from reward_function import compute_reward  # Import the reward function
+
 
 
 class Arm(embodied.Env):
@@ -13,17 +15,9 @@ class Arm(embodied.Env):
     """
 
     def __init__(self, task, data_dir='offline', **kwargs):
-        """
-        Args:
-            task: task name (unused, but required by DreamerV3)
-            data_dir: path containing either:
-                - Direct files: obs.npz, actions.npy, rewards.npy
-                - Subdirectories (demo1/, demo2/, etc.) each containing the above files
-            **kwargs: absorb any other config parameters
-        """
         self.data_dir = data_dir
         
-        # ---- Load data from multiple demos ----
+        # Load data from multiple demos
         demo_dirs = self._find_demo_dirs(data_dir)
         
         all_obs = {}
@@ -35,34 +29,27 @@ class Arm(embodied.Env):
         for demo_dir in demo_dirs:
             print(f"[INFO] Loading demo from: {demo_dir}")
             
-            # Load individual demo
             obs_data = np.load(os.path.join(demo_dir, "obs.npz"))
             actions = np.load(os.path.join(demo_dir, "actions.npy"))
-            rewards_path = os.path.join(demo_dir, "rewards.npy")
-            rewards = (
-                np.load(rewards_path)
-                if os.path.exists(rewards_path)
-                else np.zeros(len(actions), np.float32)
-            )
             
-            # Initialize observation arrays on first demo
+            # COMPUTE REWARDS FROM OBSERVATIONS instead of loading
+            rewards = self._compute_rewards_from_obs(obs_data)
+            
+            # ... rest of your loading code ...
             if not all_obs:
                 for k in obs_data.keys():
                     all_obs[k] = []
             
-            # Append observations
             for k in obs_data.keys():
                 all_obs[k].append(obs_data[k])
             
-            # Append actions and rewards
             all_actions.append(actions)
             all_rewards.append(rewards)
             
-            # Track episode boundary
             cumulative_length += len(actions)
             episode_ends.append(cumulative_length)
             
-            print(f"  Loaded {len(actions)} timesteps, total reward: {rewards.sum():.2f}")
+            print(f"  Loaded {len(actions)} timesteps, computed reward: {rewards.sum():.2f}")
         
         # Concatenate all demos
         self.obs_data = {k: np.concatenate(v, axis=0) for k, v in all_obs.items()}
@@ -156,6 +143,31 @@ class Arm(embodied.Env):
         return self._act_space
 
     # ----------------------------------------------------------------------
+
+    def _compute_rewards_from_obs(self, obs_data):
+        """
+        Compute rewards for an entire trajectory using the reward function.
+        
+        Args:
+            obs_data: dict from np.load("obs.npz"), e.g. {'gripper_pos': array(T, 3), ...}
+        
+        Returns:
+            np.ndarray: rewards of shape (T,)
+        """
+        # Get trajectory length
+        first_key = list(obs_data.keys())[0]
+        T = len(obs_data[first_key])
+        
+        rewards = np.zeros(T, dtype=np.float32)
+        
+        for t in range(T):
+            # Extract observation at timestep t
+            obs_t = {k: obs_data[k][t] for k in obs_data.keys()}
+            
+            # Compute reward using the reward function
+            rewards[t] = compute_reward(obs_t)
+        
+        return rewards
 
     def step(self, action):
 

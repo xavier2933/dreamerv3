@@ -50,12 +50,21 @@ def analyze_dataset(data_dir):
     if abs(T_obs - T_act) > 1:
         print(f"⚠️ Warning: observation length ({T_obs}) and actions length ({T_act}) differ")
 
-    # --- Quick visualization ---
+    # --- Plot helpers ---
     os.makedirs(os.path.join(data_dir, "plots"), exist_ok=True)
 
-    def plot_series(arr, title, fname):
+    def plot_series(arr, title, fname, labels=None):
         plt.figure(figsize=(8, 3))
-        plt.plot(arr)
+        
+        if arr.ndim == 1:
+            plt.plot(arr)
+        else:
+            # Plot each column with a label
+            for i in range(arr.shape[1]):
+                label = labels[i] if labels and i < len(labels) else f"Dim {i}"
+                plt.plot(arr[:, i], label=label)
+            plt.legend()
+        
         plt.title(title)
         plt.xlabel("Timestep")
         plt.ylabel("Value")
@@ -63,28 +72,47 @@ def analyze_dataset(data_dir):
         plt.savefig(os.path.join(data_dir, "plots", fname))
         plt.close()
 
+    def plot_contacts_overlay(left, right, fname):
+        plt.figure(figsize=(8, 3))
+        plt.step(range(len(left)), left.squeeze(), where="post", label="Left Contact")
+        plt.step(range(len(right)), right.squeeze(), where="post", label="Right Contact")
+        plt.title("Gripper Contacts")
+        plt.xlabel("Timestep")
+        plt.ylabel("Contact (1=True)")
+        plt.legend()
+        plt.tight_layout()
+        plt.savefig(os.path.join(data_dir, "plots", fname))
+        plt.close()
+
+    # --- Generate plots ---
     print("\nGenerating plots...")
     if "block_pose" in obs:
-        plot_series(obs["block_pose"][:, :3], "Block Position XYZ", "block_pose_xyz.png")
+        plot_series(obs["block_pose"][:, :3], "Block Position XYZ", "block_pose_xyz.png", labels=['X', 'Y', 'Z'])
     if "target_pose" in obs:
         plot_series(obs["target_pose"][:, :3], "Target Position XYZ", "target_pose_xyz.png")
-    plot_series(obs["arm_joints"][:, :7], "Arm Joint Angles", "arm_joints.png")
+    if "arm_joints" in obs:
+        plot_series(obs["arm_joints"][:, :7], "Arm Joint Angles", "arm_joints.png")
     if "wrist_angle" in obs:
         plot_series(obs["wrist_angle"], "Wrist Angle", "wrist_angle.png")
     if "gripper_state" in obs:
         plot_series(obs["gripper_state"], "Gripper Command", "gripper_state.png")
-    if "left_contact" in obs:
-        plot_series(obs["left_contact"], "Left Contact Detected", "left_contact.png")
-    if "right_contact" in obs:
-        plot_series(obs["right_contact"], "Right Contact Detected", "right_contact.png")
-    if "contact" in obs:
-        plot_series(obs["contact"], "Combined Contact (Reward)", "contact_combined.png")
+
+    # New: contact plots
+    left = obs["left_contact"] if "left_contact" in obs else None
+    right = obs["right_contact"] if "right_contact" in obs else None
+    if left is not None:
+        plot_series(left, "Left Contact Detected", "left_contact.png")
+    if right is not None:
+        plot_series(right, "Right Contact Detected", "right_contact.png")
+    if left is not None and right is not None:
+        plot_contacts_overlay(left, right, "gripper_contacts_overlay.png")
+
     plot_series(actions, "Actions", "actions.png")
     if rewards is not None:
         plot_series(rewards, "Rewards", "rewards.png")
 
     print("✅ Analysis complete. Plots saved under:", os.path.join(data_dir, "plots"))
-    print("Open them to visually check time alignment and scaling.")
+    print("Open them to visually check contact timing and grasp alignment.")
     print("\nNext: if data looks consistent, we can normalize and feed into Dreamer.")
 
 

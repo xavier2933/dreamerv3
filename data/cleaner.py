@@ -7,31 +7,17 @@ from rclpy.serialization import deserialize_message
 from rosidl_runtime_py.utilities import get_message
 from scipy.interpolate import interp1d
 from tqdm import tqdm
+import matplotlib.pyplot as plt
 
-
-"""
-TODO FIX GRIPPER COMMAND PLOT IS NOT RIGHT
-"""
-
-def read_topic(reader, topic_name, msg_type):
-    msgs = []
-    while reader.has_next():
-        topic, data, t = reader.read_next()
-        if topic == topic_name:
-            msg = deserialize_message(data, msg_type)
-            msgs.append((t * 1e-9, msg))  # sec
-    return msgs
 
 def pose_to_numpy(msg):
     # Handles geometry_msgs/Pose and raw array-like fallback
     try:
-        # Normal case (geometry_msgs/Pose)
         return np.array([
             msg.position.x, msg.position.y, msg.position.z,
             msg.orientation.x, msg.orientation.y, msg.orientation.z, msg.orientation.w
         ])
     except AttributeError:
-        # Fallback if msg is an array or list of floats
         arr = np.array(msg)
         if arr.size == 7:
             return arr
@@ -48,11 +34,11 @@ def extract_rosbag(bag_path, topics, hz=10.0):
     # Collect all available topics and types
     available = {t.name: t.type for t in reader.get_all_topics_and_types()}
     print("[INFO] Available topics:")
-    for k,v in available.items(): print(f"  {k}: {v}")
+    for k, v in available.items():
+        print(f"  {k}: {v}")
 
     # --- Load data ---
     data = {k: [] for k in topics.keys()}
-
     msg_types = {v: get_message(available[v]) for v in topics.values() if v in available}
 
     reader = rosbag2_py.SequentialReader()
@@ -77,15 +63,15 @@ def extract_rosbag(bag_path, topics, hz=10.0):
     # --- Extract numeric arrays + interpolate ---
     obs = {}
     for key, samples in data.items():
-        if not samples: continue
-        ts = np.array([t for t,_ in samples])
+        if not samples:
+            continue
+        ts = np.array([t for t, _ in samples])
         if key == "arm_joints":
             vals = np.array([msg.position for _, msg in samples])
         elif key in ["block_pose", "target_pose"]:
             vals = []
             for _, msg in samples:
                 if hasattr(msg, "transform"):
-                    # TransformStamped type
                     vals.append([
                         msg.transform.translation.x,
                         msg.transform.translation.y,
@@ -96,20 +82,19 @@ def extract_rosbag(bag_path, topics, hz=10.0):
                         msg.transform.rotation.w,
                     ])
                 elif hasattr(msg, "position"):
-                    # Pose type
                     vals.append(pose_to_numpy(msg))
                 else:
                     raise ValueError(f"Unexpected message type for {key}: {type(msg)}")
             vals = np.array(vals)
         elif key == "wrist_angle":
             vals = np.array([[msg.data] for _, msg in samples])
-        elif key in ["gripper_state", "contact"]:
+        elif key in ["gripper_state", "left_contact", "right_contact"]:
             vals = np.array([[float(msg.data)] for _, msg in samples])
         else:
             continue
 
-        if key in ["gripper_state", "contact"]:
-            # Discrete binary signal: nearest neighbor, no extrapolation beyond last sample
+        if key in ["gripper_state", "left_contact", "right_contact"]:
+            # Discrete binary signal: nearest neighbor
             vals = (vals > 0.5).astype(float)
             interp_kind = "nearest"
             interp = interp1d(
@@ -124,7 +109,7 @@ def extract_rosbag(bag_path, topics, hz=10.0):
 
         obs[key] = interp(t_uniform)
 
-    # --- Compute actions ---
+    # --- Compute actions (normalized deltas) ---
     eff = np.hstack([
         obs.get("target_pose", np.zeros((len(t_uniform), 7)))[:, :3],
         obs.get("wrist_angle", np.zeros((len(t_uniform), 1))),
@@ -135,12 +120,11 @@ def extract_rosbag(bag_path, topics, hz=10.0):
     max_abs[max_abs == 0] = 1.0
     actions /= max_abs
 
-    # --- Merge contact signals ---
+    # No combined contact or merged reward — only left/right contact
     left_contact = obs.get("left_contact", np.zeros((len(t_uniform), 1)))
     right_contact = obs.get("right_contact", np.zeros((len(t_uniform), 1)))
-    contact = np.maximum(left_contact, right_contact)
-    obs["contact"] = contact
-    rewards = contact  # for training reward
+    rewards = np.zeros_like(left_contact)  # dummy reward (you can replace later)
+
     return t_uniform, obs, actions, rewards
 
 
@@ -169,7 +153,8 @@ if __name__ == "__main__":
         "right_contact": "/right_contact_detected",
     }
 
-
     t, obs, actions, rewards = extract_rosbag(args.bag, topics, hz=args.hz)
     save_dreamer_format(args.out, obs, actions, rewards)
+
+
     print("[DONE]")

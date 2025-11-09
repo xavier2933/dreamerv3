@@ -231,19 +231,19 @@ arm:
   <<: *size1m
   
   # Offline learning - adjust based on total data size
-  batch_size: 16
+  batch_size: 8
   batch_length: 32
   report_length: 16
   
-  replay.size: 1e4  # Increased for more data
+  replay.size: 2e3  # Increased for more data
   replay.online: False
   
   run.steps: 10000  # More steps for more data
   run.envs: 1
   run.eval_envs: 0
   run.eval_eps: 0
-  run.train_ratio: 32
-  run.log_every: 100
-  run.report_every: 500
-  run.save_every: 2000
+  run.train_ratio: 64
+  run.log_every: 50
+  run.report_every: 200
+  run.save_every: 1000
 
