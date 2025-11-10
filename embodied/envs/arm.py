@@ -166,6 +166,18 @@ class Arm(embodied.Env):
             rewards[t] = compute_reward(obs_t)
         
         return rewards
+    
+
+    def reset(self):
+        """Reset the environment to the start of the next episode."""
+        # Cycle through episodes
+        self.current_episode = (self.current_episode + 1) % self.num_episodes
+        self.episode_start = self.episode_starts[self.current_episode]
+        self.episode_end = self.episode_ends[self.current_episode]
+        self.t = self.episode_start
+        self.done = False
+        return self._format_obs(self.t, is_first=True)
+
 
     def step(self, action):
 

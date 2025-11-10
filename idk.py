@@ -1,7 +1,7 @@
 import json
 from tensorboardX import SummaryWriter
 
-logdir = "/home/xavie/logdir/dreamer/20251109T171831"
+logdir = "/home/xavie/logdir/dreamer/20251110T142031"
 writer = SummaryWriter(logdir + "/tb")
 
 with open(f"{logdir}/metrics.jsonl") as f:
