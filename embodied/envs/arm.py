@@ -3,7 +3,7 @@ import glob
 import numpy as np
 import elements
 import embodied
-from reward_function import compute_reward  # Import the reward function
+from .reward_function import compute_reward  # Import the reward function
 
 
 
@@ -119,11 +119,9 @@ class Arm(embodied.Env):
         
         # Look for subdirectories with demo files
         demo_dirs = []
-        for subdir in sorted(glob.glob(os.path.join(data_dir, "*"))):
-            if os.path.isdir(subdir):
-                if (os.path.exists(os.path.join(subdir, "obs.npz")) and
-                    os.path.exists(os.path.join(subdir, "actions.npy"))):
-                    demo_dirs.append(subdir)
+        for root, dirs, files in os.walk(data_dir):
+            if 'obs.npz' in files and 'actions.npy' in files:
+                demo_dirs.append(root)
         
         if not demo_dirs:
             raise ValueError(f"No demo data found in {data_dir}. "
