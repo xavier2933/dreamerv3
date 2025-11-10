@@ -132,6 +132,20 @@ class DreamerInferenceBridge:
             config['jax'] = {}
         if isinstance(config['jax'], dict) and 'platform' not in config.get('jax', {}):
             config['jax']['platform'] = 'cpu'  # Default to CPU for inference
+        
+        # CRITICAL: Enable JAX compilation cache to speed up startup
+        jax_cache_dir = os.path.join(logdir, 'jax_cache')
+        os.makedirs(jax_cache_dir, exist_ok=True)
+        os.environ['JAX_COMPILATION_CACHE_DIR'] = jax_cache_dir
+        os.environ['JAX_PERSISTENT_CACHE_MIN_COMPILE_TIME_SECS'] = '0'
+        
+        # Check if cache exists
+        cache_files = list(Path(jax_cache_dir).glob('*'))
+        if cache_files:
+            print(f"[DreamerBridge] JAX cache found with {len(cache_files)} files - compilation should be fast!")
+        else:
+            print(f"[DreamerBridge] No JAX cache found - first run will be slow, subsequent runs will be fast")
+        print(f"[DreamerBridge] JAX cache dir: {jax_cache_dir}")
 
         # Initialize env to extract its spaces (same as training)
         print("[DreamerBridge] Creating arm environment to get spaces")
@@ -271,67 +285,151 @@ class DreamerInferenceBridge:
 
         print("[DreamerBridge] Connected to ROS bridge via ZeroMQ.")
         self.obs_cache = {}
+        self.step_count = 0
+        self.last_inference_time = 0.0
+        self.inference_dt = 1.0 / hz  # Rate limit inference calls
 
     def run(self):
         poller = zmq.Poller()
         poller.register(self.sub, zmq.POLLIN)
 
-        print("[DreamerBridge] Running inference loop.")
+        print("[DreamerBridge] Running inference loop at {:.1f} Hz".format(self.rate))
+        last_obs_time = time.time()
+        
         while True:
-            socks = dict(poller.poll(timeout=int(self.dt * 1000)))
-            if self.sub in socks:
-                msg = self.sub.recv_string()
-                data = json.loads(msg)
-                self.obs_cache.update(data)
+            # Collect all available observations (non-blocking)
+            while True:
+                socks = dict(poller.poll(timeout=0))  # Non-blocking
+                if self.sub in socks:
+                    msg = self.sub.recv_string()
+                    data = json.loads(msg)
+                    self.obs_cache.update(data)
+                    last_obs_time = time.time()
+                    if self.step_count % 50 == 0:
+                        print(f"[DreamerBridge] Updated cache with: {list(data.keys())}")
+                else:
+                    break  # No more messages
+
+            # Check if we've received recent observations
+            if time.time() - last_obs_time > 2.0:
+                print(f"[DreamerBridge] WARNING: No observations received in 2 seconds")
+                last_obs_time = time.time()
+
+            # Rate limit inference to exactly the specified Hz
+            current_time = time.time()
+            time_since_last = current_time - self.last_inference_time
+            if time_since_last < self.inference_dt:
+                time.sleep(self.inference_dt - time_since_last)
+                continue
 
             required = [
                 "arm_joints", "block_pose", "target_pose",
                 "wrist_angle", "gripper_state", "left_contact", "right_contact"
             ]
-            if not all(k in self.obs_cache for k in required):
+            missing = [k for k in required if k not in self.obs_cache]
+            if missing:
+                if self.step_count % 100 == 0:  # Print every 100 steps to avoid spam
+                    print(f"[DreamerBridge] Waiting for observations. Missing: {missing}")
+                    print(f"[DreamerBridge] Current cache keys: {list(self.obs_cache.keys())}")
+                time.sleep(0.01)
                 continue
 
-            obs = self.obs_cache
+            # Make a snapshot of observations (deep copy to avoid race conditions)
+            obs = {k: v for k, v in self.obs_cache.items()}
             
             # Build observation dictionary matching the space definition
-            obs_dict = {
-                "arm_joints": tf_to_array(obs["arm_joints"]),  # (9,)
-                "block_pose": tf_to_array(obs["block_pose"]),  # (7,)
-                "target_pose": tf_to_array(obs["target_pose"]),  # (7,)
-                "wrist_angle": tf_to_array(obs["wrist_angle"]).reshape(1),  # (1,)
-                "gripper_state": tf_to_array(obs["gripper_state"]).reshape(1),  # (1,)
-                "left_contact": tf_to_array(obs["left_contact"]).reshape(1),  # (1,)
-                "right_contact": tf_to_array(obs["right_contact"]).reshape(1),  # (1,)
-            }
-            
-            # Add is_first flag for agent state management
-            if self.agent_state is None:
-                obs_dict['is_first'] = np.array(True, dtype=bool)
-            else:
-                obs_dict['is_first'] = np.array(False, dtype=bool)
+            try:
+                obs_dict = {
+                    "arm_joints": tf_to_array(obs["arm_joints"]),  # (9,)
+                    "block_pose": tf_to_array(obs["block_pose"]),  # (7,)
+                    "target_pose": tf_to_array(obs["target_pose"]),  # (7,)
+                    "wrist_angle": tf_to_array(obs["wrist_angle"]).reshape(1),  # (1,)
+                    "gripper_state": tf_to_array(obs["gripper_state"]).reshape(1),  # (1,)
+                    "left_contact": tf_to_array(obs["left_contact"]).reshape(1),  # (1,)
+                    "right_contact": tf_to_array(obs["right_contact"]).reshape(1),  # (1,)
+                }
+                
+                # Add standard DreamerV3 observation keys (matching training env)
+                if self.agent_state is None:
+                    obs_dict['is_first'] = np.array(True, dtype=bool)
+                    print("[DreamerBridge] First observation, initializing agent state")
+                else:
+                    obs_dict['is_first'] = np.array(False, dtype=bool)
+                
+                # Always add these standard keys (matching the env definition)
+                obs_dict['is_last'] = np.array(False, dtype=bool)
+                obs_dict['is_terminal'] = np.array(False, dtype=bool)
+                obs_dict['reward'] = np.float32(0.0)  # Reward not used for inference
+                
+                # Debug: print observation shapes
+                if self.step_count == 0 or self.step_count % 50 == 0:
+                    print(f"[DreamerBridge] Step {self.step_count} - Observation shapes:")
+                    for k, v in obs_dict.items():
+                        if k != 'is_first':
+                            print(f"  {k}: {v.shape}, dtype: {v.dtype}")
+
+            except Exception as e:
+                print(f"[DreamerBridge] ERROR building observation dict: {e}")
+                import traceback
+                traceback.print_exc()
+                continue
 
             try:
-                # Call agent policy
-                action_dict, self.agent_state = self.agent.policy(
-                    obs_dict, self.agent_state, mode='eval'
+                # Call agent policy with correct signature: policy(carry, obs, mode)
+                if self.step_count % 10 == 0:
+                    print(f"[DreamerBridge] Calling agent.policy() at step {self.step_count}")
+                
+                # Make sure obs_dict is not None
+                if obs_dict is None:
+                    print("[DreamerBridge] ERROR: obs_dict is None!")
+                    continue
+                
+                # Debug the exact format being passed
+                if self.step_count == 0:
+                    print(f"[DreamerBridge] obs_dict type: {type(obs_dict)}")
+                    print(f"[DreamerBridge] obs_dict keys: {list(obs_dict.keys())}")
+                    for k, v in obs_dict.items():
+                        print(f"  {k}: type={type(v)}, value={v if k == 'is_first' else 'array...'}")
+                    print(f"[DreamerBridge] agent_state type: {type(self.agent_state)}")
+                
+                # CORRECT: policy(carry, obs, mode) - returns (carry, act, out)
+                self.agent_state, act, out = self.agent.policy(
+                    self.agent_state, obs_dict, mode='eval'
                 )
+                
+                if self.step_count % 10 == 0:
+                    print(f"[DreamerBridge] Agent returned act type: {type(act)}")
 
-                if isinstance(action_dict, dict):
-                    act = action_dict.get("action", None)
-                    if act is None:
+                # The act should be a dict with 'action' key
+                if isinstance(act, dict):
+                    if self.step_count % 10 == 0:
+                        print(f"[DreamerBridge] Action dict keys: {list(act.keys())}")
+                    action_array = act.get("action", None)
+                    if action_array is None:
+                        print("[DreamerBridge] WARNING: No 'action' key in act dict!")
+                        print(f"[DreamerBridge] Full act dict: {act}")
                         continue
-                    act = np.array(act, dtype=np.float32).flatten()
+                    action_array = np.array(action_array, dtype=np.float32).flatten()
                 else:
-                    act = np.array(action_dict, dtype=np.float32).flatten()
+                    # If it's already an array
+                    action_array = np.array(act, dtype=np.float32).flatten()
 
-                msg = json.dumps({"action": act.tolist()})
+                if self.step_count % 10 == 0:
+                    print(f"[DreamerBridge] Step {self.step_count}: Publishing action: {action_array}")
+                    print(f"[DreamerBridge] Action shape: {action_array.shape}, range: [{action_array.min():.3f}, {action_array.max():.3f}]")
+                
+                msg = json.dumps({"action": action_array.tolist()})
                 self.pub.send_string(msg)
                 
+                self.step_count += 1
+                self.last_inference_time = time.time()
+                
             except Exception as e:
-                print(f"[DreamerBridge] Error during inference: {e}")
+                print(f"[DreamerBridge] ERROR during inference: {e}")
+                import traceback
+                traceback.print_exc()
+                time.sleep(0.1)
                 continue
-            
-            time.sleep(self.dt)
 
 
 if __name__ == "__main__":

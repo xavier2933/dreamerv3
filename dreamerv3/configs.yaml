@@ -247,3 +247,31 @@ arm:
   run.report_every: 200
   run.save_every: 1000
 
+arm_interactive:
+  task: arm_int
+
+  # Environment directory (optional for now — Dreamer won’t use demo data here)
+  env.arm.data_dir: /home/xavie/dreamer/dreamerv3/data/demos/
+
+  # Use a small model for quick runs
+  <<: *size1m
+
+  # === Training setup ===
+  batch_size: 8
+  batch_length: 32
+  report_length: 16
+
+  # === Replay buffer ===
+  replay.size: 1e5
+  replay.online: True   # IMPORTANT: interactive mode must be online
+
+  # === Run parameters ===
+  run.steps: 100000     # shorter proof-of-concept run
+  run.envs: 1
+  run.eval_envs: 0
+  run.eval_eps: 0
+  run.train_ratio: 16
+  run.log_every: 50
+  run.report_every: 200
+  run.save_every: 1000
+
