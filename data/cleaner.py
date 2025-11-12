@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+ #!/usr/bin/env python3
 import os
 import argparse
 import numpy as np
@@ -144,13 +144,13 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     topics = {
-        "arm_joints": "/joint_states",
-        "block_pose": "/block_pose",
-        "target_pose": "/unity_target_pose",
-        "wrist_angle": "/wrist_angle",
-        "gripper_state": "/gripper_command",
-        "left_contact": "/left_contact_detected",
-        "right_contact": "/right_contact_detected",
+        "arm_joints": "/joint_states",              # Vector<Angles [rads]>
+        "block_pose": "/block_pose",                # Pose
+        "target_pose": "/unity_target_pose",        # X, Y, Z position
+        "wrist_angle": "/wrist_angle",              # Angle -180 < x < 180
+        "gripper_state": "/gripper_command",        # Bool, open/close
+        "left_contact": "/left_contact_detected",   # Bool, true/false
+        "right_contact": "/right_contact_detected", # Bool, true/false
     }
 
     t, obs, actions, rewards = extract_rosbag(args.bag, topics, hz=args.hz)

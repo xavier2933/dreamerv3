@@ -194,6 +194,21 @@ class Arm(embodied.Env):
             self.t = self.episode_start
             self.done = False
             return self._format_obs(self.t, is_first=True)
+        
+        success = False
+        if "block_pose" in self.obs_data and "gripper_state" in self.obs_data:
+            block_pos = self.obs_data["block_pose"][self.t][:3]
+            gripper_state = self.obs_data["gripper_state"][self.t][0]
+            left_contact = self.obs_data.get("left_contact", np.zeros((len(self.obs_data["block_pose"]), 1)))[self.t][0]
+            right_contact = self.obs_data.get("right_contact", np.zeros((len(self.obs_data["block_pose"]), 1)))[self.t][0]
+            
+            if left_contact > 0.5 and right_contact > 0.5 and gripper_state < 0.5 and block_pos[2] > 0.25:
+                success = True
+
+        if success:
+            print(f"[INFO] Success detected at t={self.t}, ending episode early.")
+            self.done = True
+            return self._format_obs(self.t, is_last=True, is_terminal=True)
 
         # ---- Check for last timestep BEFORE incrementing ----
         if self.t >= self.episode_end - 1:
