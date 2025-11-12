@@ -342,7 +342,7 @@ def run_closed_loop(agent, rollout_steps=300):
             obs = batchify_obs(next_obs_raw)
 
             if done:
-                print(f"[INFO] Episode finished early at step {t}")
+                print(f"[INFO] Episode finished early at step {t} with reward {reward_val}")
                 break
 
         except Exception as e:
@@ -415,7 +415,7 @@ def find_demo_dirs(data_dir):
 def main():
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument('--logdir', default='/home/xavie/logdir/dreamer/20251109T171831')
+    parser.add_argument('--logdir', default='/home/xavie/logdir/dreamer/20251110T143618')
     parser.add_argument('--data_dir', default='/home/xavie/dreamer/dreamerv3/data/demos/success',
                        help='Directory containing demo folders')
     parser.add_argument('--demo', default=None, 
