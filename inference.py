@@ -1,43 +1,79 @@
 #!/usr/bin/env python3
-import sys, os
+"""
+DreamerV3 client that communicates with ROS via ZeroMQ bridge.
+Runs in Python 3.11 venv, bridge runs in Python 3.10 ROS venv.
+"""
+import sys
+import os
 sys.path.append(os.path.dirname(__file__))
+
 import numpy as np
-import zmq
-import embodied
-import json
-import time
 from pathlib import Path
+import yaml
+import json
+import zmq
+import time
 
 
-def tf_to_array(data):
-    return np.array(data, dtype=np.float32)
-
-
-class DreamerInferenceBridge:
-    def __init__(self, logdir: str, hz: float = 10.0):
-        print(f"[DreamerBridge] Loading DreamerV3 agent from {logdir}")
-
-        # --- Load agent from checkpoint ---
+class DreamerZMQClient:
+    def __init__(self, logdir, hz=10.0):
+        self.hz = hz
+        self.rate_duration = 1.0 / hz
+        
+        print(f"[INFO] Loading DreamerV3 agent from {logdir}")
+        self.agent = self._create_agent(logdir)
+        
+        # Agent state (batch_size=1)
+        try:
+            self.agent_state = self.agent.init_policy(batch_size=1)
+        except TypeError:
+            self.agent_state = self.agent.init_policy(1)
+        
+        # Current end-effector state for delta integration
+        self.current_target_pos = np.array([0.0, 0.0, 0.0])  # x, y, z
+        self.current_wrist_angle = 0.0
+        self.current_gripper_state = 0.0
+        
+        # Action normalization factors (set to 1.0 for now, tune later)
+        self.action_scale = np.ones(5)  # [x, y, z, wrist, gripper]
+        
+        # Track initialization
+        self.initialized = False
+        self.step_count = 0
+        
+        # ZeroMQ setup
+        print("[INFO] Setting up ZeroMQ connections...")
+        ctx = zmq.Context()
+        
+        # Subscribe to observations from ROS bridge
+        self.sub = ctx.socket(zmq.SUB)
+        self.sub.connect("tcp://127.0.0.1:5556")
+        self.sub.setsockopt_string(zmq.SUBSCRIBE, "")
+        
+        # Publish actions to ROS bridge
+        self.pub = ctx.socket(zmq.PUB)
+        self.pub.connect("tcp://127.0.0.1:5557")
+        
+        # Give ZMQ time to establish connections
+        time.sleep(0.5)
+        
+        print("[INFO] DreamerV3 ZMQ client initialized")
+        print(f"[INFO] Running at {hz} Hz")
+        print("[INFO] Waiting for observations from ROS bridge...")
+    
+    def _create_agent(self, logdir):
+        """Create and load the trained agent (same as inference script)."""
         from dreamerv3 import agent as dreamer_agent
         from embodied.envs import arm
         
-        # Load the checkpoint configuration
         ckpt_path = Path(logdir)
         config_file = ckpt_path / "config.yaml"
         
-        # Load config from YAML
-        import yaml
-        
-        # Use FullLoader to properly parse scientific notation
-        yaml_loader = yaml.FullLoader
-        
-        # First load the base config from dreamerv3/configs.yaml
+        # Load base config
         default_config_path = Path(__file__).parent / "dreamerv3" / "configs.yaml"
-        print(f"[DreamerBridge] Loading base config from {default_config_path}")
         with open(default_config_path, 'r') as f:
-            base_configs = yaml.load(f, Loader=yaml_loader)
+            base_configs = yaml.load(f, Loader=yaml.FullLoader)
         
-        # Helper function to deep merge dicts
         def deep_merge(base, override):
             result = base.copy()
             for key, value in override.items():
@@ -47,56 +83,32 @@ class DreamerInferenceBridge:
                     result[key] = value
             return result
         
-        # Start with defaults
+        # Build config
         config = base_configs.get('defaults', {}).copy()
-        print(f"[DreamerBridge] Loaded defaults, keys: {list(config.keys())[:10]}...")
-        
-        # Merge with size1m preset if it exists
         if 'size1m' in base_configs:
             config = deep_merge(config, base_configs['size1m'])
-            print(f"[DreamerBridge] Merged size1m preset")
-        
-        # Merge with arm-specific config if it exists
         if 'arm' in base_configs:
             arm_config = base_configs['arm'].copy()
-            # Remove the anchor reference if present
             arm_config.pop('<<', None)
             config = deep_merge(config, arm_config)
-            print(f"[DreamerBridge] Merged arm config")
         
-        # Finally, merge with checkpoint config if it exists
         if config_file.exists():
             with open(config_file, 'r') as f:
-                checkpoint_config = yaml.load(f, Loader=yaml_loader)
+                checkpoint_config = yaml.load(f, Loader=yaml.FullLoader)
             config = deep_merge(config, checkpoint_config)
-            print(f"[DreamerBridge] Merged with checkpoint config from {config_file}")
-        else:
-            print(f"[DreamerBridge] No checkpoint config found at {config_file}, using base config")
         
-        # Debug: check if critical keys exist
-        print(f"[DreamerBridge] Top-level config keys: {list(config.keys())}")
-        if 'agent' in config:
-            print(f"[DreamerBridge] Agent config type: {type(config['agent'])}")
-            if isinstance(config['agent'], dict):
-                print(f"[DreamerBridge] Agent keys: {list(config['agent'].keys())[:10]}")
-        
-        # The config uses dot notation - we need to flatten it properly
-        # Convert dot-notation keys to nested structure
+        # Unflatten config
         def unflatten_config(flat_config):
             result = {}
             for key, value in flat_config.items():
                 if '.' not in key and not key.startswith('.*'):
-                    # Direct key
                     if isinstance(value, dict):
                         result[key] = unflatten_config(value)
                     else:
                         result[key] = value
                 elif key.startswith('.*\\.'):
-                    # Pattern-based config (like .*\.rssm)
-                    # Store as-is for now
                     result[key] = value
                 else:
-                    # Dot-notation key like 'env.arm.data_dir'
                     parts = key.split('.')
                     current = result
                     for part in parts[:-1]:
@@ -109,67 +121,42 @@ class DreamerInferenceBridge:
             return result
         
         config = unflatten_config(config)
-        print(f"[DreamerBridge] After unflattening, top keys: {list(config.keys())}")
-        if 'agent' in config:
-            print(f"[DreamerBridge] Agent keys after unflatten: {list(config.get('agent', {}).keys())[:10]}")
         
         if 'enc' not in config and 'agent' in config and isinstance(config['agent'], dict):
-            # The enc/dec configs might be inside agent
-            print(f"[DreamerBridge] Moving agent subconfigs to top level")
             agent_cfg = config.pop('agent')
             config.update(agent_cfg)
         
-        if 'enc' not in config:
-            print(f"[DreamerBridge] ERROR: Still no 'enc' in config! Keys: {list(config.keys())}")
-            print(f"[DreamerBridge] This might be a config structure issue. Check configs.yaml format.")
-        
-        # Ensure config is a dict
         if not isinstance(config, dict):
             config = {}
         
-        # Make sure jax config exists
         if 'jax' not in config:
             config['jax'] = {}
         if isinstance(config['jax'], dict) and 'platform' not in config.get('jax', {}):
-            config['jax']['platform'] = 'cpu'  # Default to CPU for inference
+            config['jax']['platform'] = 'cpu'
         
-        # CRITICAL: Enable JAX compilation cache to speed up startup
+        # Enable JAX cache
         jax_cache_dir = os.path.join(logdir, 'jax_cache')
         os.makedirs(jax_cache_dir, exist_ok=True)
         os.environ['JAX_COMPILATION_CACHE_DIR'] = jax_cache_dir
         os.environ['JAX_PERSISTENT_CACHE_MIN_COMPILE_TIME_SECS'] = '0'
+        print(f"[INFO] JAX cache: {jax_cache_dir}")
         
-        # Check if cache exists
-        cache_files = list(Path(jax_cache_dir).glob('*'))
-        if cache_files:
-            print(f"[DreamerBridge] JAX cache found with {len(cache_files)} files - compilation should be fast!")
-        else:
-            print(f"[DreamerBridge] No JAX cache found - first run will be slow, subsequent runs will be fast")
-        print(f"[DreamerBridge] JAX cache dir: {jax_cache_dir}")
-
-        # Initialize env to extract its spaces (same as training)
-        print("[DreamerBridge] Creating arm environment to get spaces")
+        # Create dummy env to get spaces
         env = arm.Arm(task="arm_offline", data_dir="/home/xavie/dreamer/dreamerv3/data/demos/")
-        
         obs_space = env.obs_space
-        act_space = env.act_space  # Keep the full act_space dict
+        act_space = env.act_space
         
-        print(f"[DreamerBridge] Obs space keys: {list(obs_space.keys())}")
-        print(f"[DreamerBridge] Act space keys: {list(act_space.keys())}")
-        
-        # Remove 'reset' from action space if present (agent doesn't like it)
         if 'reset' in act_space:
-            print("[DreamerBridge] Removing 'reset' from action space")
             act_space = {k: v for k, v in act_space.items() if k != 'reset'}
         
-        print(f"[DreamerBridge] Final act space keys: {list(act_space.keys())}")
+        print(f"[INFO] Obs space keys: {list(obs_space.keys())}")
+        print(f"[INFO] Act space keys: {list(act_space.keys())}")
         
-        # Create a simple config wrapper that supports attribute access
+        # Convert config to attribute-accessible dict
         class ConfigDict(dict):
             def __getattr__(self, key):
                 try:
                     value = self[key]
-                    # Convert lists to tuples for ninjax compatibility
                     if isinstance(value, list):
                         return tuple(value)
                     return value
@@ -179,19 +166,16 @@ class DreamerInferenceBridge:
                 self[key] = value
             def __getitem__(self, key):
                 value = super().__getitem__(key)
-                # Convert lists to tuples for ninjax compatibility
                 if isinstance(value, list):
                     return tuple(value)
                 return value
             def items(self):
-                # Convert lists to tuples in items as well
                 for k, v in super().items():
                     if isinstance(v, list):
                         yield k, tuple(v)
                     else:
                         yield k, v
         
-        # Convert nested dicts to ConfigDict for attribute access
         def dictify(d):
             if isinstance(d, dict):
                 result = ConfigDict()
@@ -199,12 +183,9 @@ class DreamerInferenceBridge:
                     result[k] = dictify(v)
                 return result
             elif isinstance(d, list):
-                # Convert lists to tuples for ninjax compatibility
                 return tuple(dictify(item) for item in d)
             elif isinstance(d, str):
-                # Try to convert strings that look like numbers
                 try:
-                    # Check for scientific notation or float
                     if 'e' in d.lower() or '.' in d:
                         return float(d)
                     return int(d)
@@ -213,226 +194,201 @@ class DreamerInferenceBridge:
             return d
         
         config = dictify(config)
-        print("[DreamerBridge] Creating agent")
-        self.agent = dreamer_agent.Agent(obs_space, act_space, config)
-
-        # Load weights from checkpoint
+        
+        print("[INFO] Creating agent")
+        agent = dreamer_agent.Agent(obs_space, act_space, config)
+        
+        # Load checkpoint
         ckpt_dir = ckpt_path / "ckpt"
-        
-        if not ckpt_dir.exists():
-            print(f"[DreamerBridge] Warning: no checkpoint found at {ckpt_dir}")
-        else:
-            print(f"[DreamerBridge] Found checkpoint directory at {ckpt_dir}")
-            try:
-                # Read the 'latest' file to find the checkpoint subdirectory
-                latest_file = ckpt_dir / "latest"
-                latest_name = None
-                if latest_file.exists():
-                    with open(latest_file, 'r') as f:
-                        content = f.read().strip()
-                        if content:
-                            latest_name = content
-                            print(f"[DreamerBridge] Latest checkpoint from file: {latest_name}")
-                
-                # If latest file is empty or missing, find the most recent directory
-                if not latest_name:
-                    subdirs = [d for d in ckpt_dir.iterdir() if d.is_dir()]
-                    if subdirs:
-                        latest_name = sorted(subdirs)[-1].name
-                        print(f"[DreamerBridge] Found latest checkpoint directory: {latest_name}")
-                
-                if latest_name:
-                    agent_pkl = ckpt_dir / latest_name / "agent.pkl"
-                    if agent_pkl.exists():
-                        print(f"[DreamerBridge] Loading agent weights from {agent_pkl}")
-                        import pickle
-                        with open(agent_pkl, 'rb') as f:
-                            agent_state = pickle.load(f)
-                        
-                        # Load the state into the agent
-                        if hasattr(self.agent, 'load_state'):
-                            self.agent.load_state(agent_state)
-                        elif hasattr(self.agent, 'load'):
-                            self.agent.load(agent_state)
-                        else:
-                            # Direct state loading
-                            self.agent.__dict__.update(agent_state)
-                        print("[DreamerBridge] Successfully loaded checkpoint!")
-                    else:
-                        print(f"[DreamerBridge] Warning: agent.pkl not found at {agent_pkl}")
-                else:
-                    print("[DreamerBridge] Could not determine latest checkpoint")
-                    
-            except Exception as e:
-                print(f"[DreamerBridge] Error loading checkpoint: {e}")
-                import traceback
-                traceback.print_exc()
-
-        # Initialize agent state
-        self.agent_state = None
-
-        self.rate = hz
-        self.dt = 1.0 / hz
-
-        # --- ZeroMQ setup ---
-        ctx = zmq.Context()
-        self.sub = ctx.socket(zmq.SUB)
-        self.sub.connect("tcp://127.0.0.1:5556")
-        self.sub.setsockopt_string(zmq.SUBSCRIBE, "")
-
-        self.pub = ctx.socket(zmq.PUB)
-        self.pub.connect("tcp://127.0.0.1:5557")
-
-        print("[DreamerBridge] Connected to ROS bridge via ZeroMQ.")
-        self.obs_cache = {}
-        self.step_count = 0
-        self.last_inference_time = 0.0
-        self.inference_dt = 1.0 / hz  # Rate limit inference calls
-
-    def run(self):
-        poller = zmq.Poller()
-        poller.register(self.sub, zmq.POLLIN)
-
-        print("[DreamerBridge] Running inference loop at {:.1f} Hz".format(self.rate))
-        last_obs_time = time.time()
-        
-        while True:
-            # Collect all available observations (non-blocking)
-            while True:
-                socks = dict(poller.poll(timeout=0))  # Non-blocking
-                if self.sub in socks:
-                    msg = self.sub.recv_string()
-                    data = json.loads(msg)
-                    self.obs_cache.update(data)
-                    last_obs_time = time.time()
-                    if self.step_count % 50 == 0:
-                        print(f"[DreamerBridge] Updated cache with: {list(data.keys())}")
-                else:
-                    break  # No more messages
-
-            # Check if we've received recent observations
-            if time.time() - last_obs_time > 2.0:
-                print(f"[DreamerBridge] WARNING: No observations received in 2 seconds")
-                last_obs_time = time.time()
-
-            # Rate limit inference to exactly the specified Hz
-            current_time = time.time()
-            time_since_last = current_time - self.last_inference_time
-            if time_since_last < self.inference_dt:
-                time.sleep(self.inference_dt - time_since_last)
-                continue
-
-            required = [
-                "arm_joints", "block_pose", "target_pose",
-                "wrist_angle", "gripper_state", "left_contact", "right_contact"
-            ]
-            missing = [k for k in required if k not in self.obs_cache]
-            if missing:
-                if self.step_count % 100 == 0:  # Print every 100 steps to avoid spam
-                    print(f"[DreamerBridge] Waiting for observations. Missing: {missing}")
-                    print(f"[DreamerBridge] Current cache keys: {list(self.obs_cache.keys())}")
-                time.sleep(0.01)
-                continue
-
-            # Make a snapshot of observations (deep copy to avoid race conditions)
-            obs = {k: v for k, v in self.obs_cache.items()}
+        if ckpt_dir.exists():
+            latest_file = ckpt_dir / "latest"
+            latest_name = None
+            if latest_file.exists():
+                with open(latest_file, 'r') as f:
+                    content = f.read().strip()
+                    if content:
+                        latest_name = content
             
-            # Build observation dictionary matching the space definition
-            try:
-                obs_dict = {
-                    "arm_joints": tf_to_array(obs["arm_joints"]),  # (9,)
-                    "block_pose": tf_to_array(obs["block_pose"]),  # (7,)
-                    "target_pose": tf_to_array(obs["target_pose"]),  # (7,)
-                    "wrist_angle": tf_to_array(obs["wrist_angle"]).reshape(1),  # (1,)
-                    "gripper_state": tf_to_array(obs["gripper_state"]).reshape(1),  # (1,)
-                    "left_contact": tf_to_array(obs["left_contact"]).reshape(1),  # (1,)
-                    "right_contact": tf_to_array(obs["right_contact"]).reshape(1),  # (1,)
-                }
+            if not latest_name:
+                subdirs = [d for d in ckpt_dir.iterdir() if d.is_dir()]
+                if subdirs:
+                    latest_name = sorted(subdirs)[-1].name
+            
+            if latest_name:
+                agent_pkl = ckpt_dir / latest_name / "agent.pkl"
+                if agent_pkl.exists():
+                    print(f"[INFO] Loading weights from {agent_pkl}")
+                    import pickle
+                    with open(agent_pkl, 'rb') as f:
+                        agent_state = pickle.load(f)
+                    
+                    if hasattr(agent, 'load_state'):
+                        agent.load_state(agent_state)
+                    elif hasattr(agent, 'load'):
+                        agent.load(agent_state)
+                    else:
+                        agent.__dict__.update(agent_state)
+                    print("[INFO] Checkpoint loaded!")
+        
+        return agent
+    
+    def _parse_obs_from_ros(self, obs_dict):
+        """Convert ROS observations to DreamerV3 format (batched)."""
+        obs = {}
+        
+        # Convert each observation to numpy array with batch dimension
+        for key in ['arm_joints', 'block_pose', 'target_pose', 'wrist_angle', 
+                    'gripper_state', 'left_contact', 'right_contact']:
+            if key in obs_dict:
+                data = np.array(obs_dict[key], dtype=np.float32)
+                obs[key] = data[np.newaxis, ...]  # Add batch dim
+            else:
+                # Provide defaults if missing
+                if key == 'arm_joints':
+                    obs[key] = np.zeros((1, 6), dtype=np.float32)
+                elif key in ['block_pose', 'target_pose']:
+                    obs[key] = np.zeros((1, 7), dtype=np.float32)
+                elif key == 'wrist_angle':
+                    obs[key] = np.zeros((1, 1), dtype=np.float32)
+                elif key in ['gripper_state', 'left_contact', 'right_contact']:
+                    obs[key] = np.zeros((1, 1), dtype=np.float32)
+        
+        # Add standard DreamerV3 keys
+        obs['is_first'] = np.array([self.step_count == 0], dtype=bool)
+        obs['is_last'] = np.array([False], dtype=bool)
+        obs['is_terminal'] = np.array([False], dtype=bool)
+        obs['reward'] = np.array([0.0], dtype=np.float32)
+        
+        # Update current target position from observations
+        if 'target_pose' in obs_dict:
+            self.current_target_pos = np.array(obs_dict['target_pose'][:3])
+        if 'wrist_angle' in obs_dict:
+            self.current_wrist_angle = obs_dict['wrist_angle'][0]
+        if 'gripper_state' in obs_dict:
+            self.current_gripper_state = obs_dict['gripper_state'][0]
+        
+        return obs
+    
+    def _check_obs_complete(self, obs_dict):
+        """Check if all required observations are present."""
+        required = ['arm_joints', 'block_pose', 'target_pose', 'wrist_angle',
+                   'gripper_state', 'left_contact', 'right_contact']
+        return all(key in obs_dict for key in required)
+    
+    def run(self):
+        """Main control loop."""
+        print("\n[INFO] Starting control loop...")
+        
+        last_step_time = time.time()
+        
+        try:
+            while True:
+                loop_start = time.time()
                 
-                # Add standard DreamerV3 observation keys (matching training env)
-                if self.agent_state is None:
-                    obs_dict['is_first'] = np.array(True, dtype=bool)
-                    print("[DreamerBridge] First observation, initializing agent state")
-                else:
-                    obs_dict['is_first'] = np.array(False, dtype=bool)
-                
-                # Always add these standard keys (matching the env definition)
-                obs_dict['is_last'] = np.array(False, dtype=bool)
-                obs_dict['is_terminal'] = np.array(False, dtype=bool)
-                obs_dict['reward'] = np.float32(0.0)  # Reward not used for inference
-                
-                # Debug: print observation shapes
-                if self.step_count == 0 or self.step_count % 50 == 0:
-                    print(f"[DreamerBridge] Step {self.step_count} - Observation shapes:")
-                    for k, v in obs_dict.items():
-                        if k != 'is_first':
-                            print(f"  {k}: {v.shape}, dtype: {v.dtype}")
-
-            except Exception as e:
-                print(f"[DreamerBridge] ERROR building observation dict: {e}")
-                import traceback
-                traceback.print_exc()
-                continue
-
-            try:
-                # Call agent policy with correct signature: policy(carry, obs, mode)
-                if self.step_count % 10 == 0:
-                    print(f"[DreamerBridge] Calling agent.policy() at step {self.step_count}")
-                
-                # Make sure obs_dict is not None
-                if obs_dict is None:
-                    print("[DreamerBridge] ERROR: obs_dict is None!")
-                    continue
-                
-                # Debug the exact format being passed
-                if self.step_count == 0:
-                    print(f"[DreamerBridge] obs_dict type: {type(obs_dict)}")
-                    print(f"[DreamerBridge] obs_dict keys: {list(obs_dict.keys())}")
-                    for k, v in obs_dict.items():
-                        print(f"  {k}: type={type(v)}, value={v if k == 'is_first' else 'array...'}")
-                    print(f"[DreamerBridge] agent_state type: {type(self.agent_state)}")
-                
-                # CORRECT: policy(carry, obs, mode) - returns (carry, act, out)
-                self.agent_state, act, out = self.agent.policy(
-                    self.agent_state, obs_dict, mode='eval'
-                )
-                
-                if self.step_count % 10 == 0:
-                    print(f"[DreamerBridge] Agent returned act type: {type(act)}")
-
-                # The act should be a dict with 'action' key
-                if isinstance(act, dict):
-                    if self.step_count % 10 == 0:
-                        print(f"[DreamerBridge] Action dict keys: {list(act.keys())}")
-                    action_array = act.get("action", None)
-                    if action_array is None:
-                        print("[DreamerBridge] WARNING: No 'action' key in act dict!")
-                        print(f"[DreamerBridge] Full act dict: {act}")
+                # Receive observations from ROS bridge (non-blocking)
+                try:
+                    msg_str = self.sub.recv_string(flags=zmq.NOBLOCK)
+                    obs_dict = json.loads(msg_str)
+                    
+                    # Check if we have all observations
+                    if not self._check_obs_complete(obs_dict):
+                        if not self.initialized:
+                            print("[INFO] Waiting for complete observations...", end='\r')
                         continue
-                    action_array = np.array(action_array, dtype=np.float32).flatten()
-                else:
-                    # If it's already an array
-                    action_array = np.array(act, dtype=np.float32).flatten()
+                    
+                    if not self.initialized:
+                        print("\n[INFO] All observations received! Starting inference.")
+                        self.initialized = True
+                    
+                    # Convert to DreamerV3 format
+                    obs = self._parse_obs_from_ros(obs_dict)
+                    
+                    # Run policy
+                    result = self.agent.policy(self.agent_state, obs, mode='eval')
+                    
+                    if len(result) == 3:
+                        self.agent_state, act, _ = result
+                    elif len(result) == 2:
+                        self.agent_state, act = result
+                    else:
+                        print(f"[ERROR] Unexpected policy return format: {len(result)} values")
+                        continue
+                    
+                    # Extract action
+                    if isinstance(act, dict):
+                        action = act.get('action', act)
+                    else:
+                        action = act
+                    
+                    # Remove batch dim and ensure 1-D
+                    if hasattr(action, 'ndim') and action.ndim > 1:
+                        action = action[0]
+                    action = np.array(action, dtype=np.float32).flatten()
+                    
+                    # Action is normalized delta: [dx, dy, dz, d_wrist, d_gripper]
+                    # Un-normalize
+                    delta = action * self.action_scale
+                    
+                    # Integrate to get absolute commands
+                    new_pos = self.current_target_pos + delta[:3]
+                    new_wrist = self.current_wrist_angle + delta[3]
+                    new_gripper = np.clip(self.current_gripper_state + delta[4], 0.0, 1.0)
+                    
+                    # Package action for ROS bridge
+                    # Bridge expects [x, y, z, wrist, gripper] as absolute positions
+                    action_msg = {
+                        "action": [
+                            float(new_pos[0]),
+                            float(new_pos[1]),
+                            float(new_pos[2]),
+                            float(new_wrist),
+                            float(new_gripper)
+                        ]
+                    }
+                    
+                    # Send action to ROS bridge
+                    self.pub.send_string(json.dumps(action_msg))
+                    
+                    # Update current state
+                    self.current_target_pos = new_pos
+                    self.current_wrist_angle = new_wrist
+                    self.current_gripper_state = new_gripper
+                    
+                    self.step_count += 1
+                    
+                    if self.step_count % 50 == 0:
+                        print(f"[Step {self.step_count}] pos={np.round(new_pos, 3)}, "
+                              f"wrist={new_wrist:.2f}, gripper={new_gripper:.2f}")
+                
+                except zmq.Again:
+                    # No message available, continue
+                    pass
+                
+                except Exception as e:
+                    print(f"[ERROR] Control loop error: {e}")
+                    import traceback
+                    traceback.print_exc()
+                
+                # Rate limiting
+                elapsed = time.time() - loop_start
+                sleep_time = self.rate_duration - elapsed
+                if sleep_time > 0:
+                    time.sleep(sleep_time)
+        
+        except KeyboardInterrupt:
+            print("\n[INFO] Shutting down...")
 
-                if self.step_count % 10 == 0:
-                    print(f"[DreamerBridge] Step {self.step_count}: Publishing action: {action_array}")
-                    print(f"[DreamerBridge] Action shape: {action_array.shape}, range: [{action_array.min():.3f}, {action_array.max():.3f}]")
-                
-                msg = json.dumps({"action": action_array.tolist()})
-                self.pub.send_string(msg)
-                
-                self.step_count += 1
-                self.last_inference_time = time.time()
-                
-            except Exception as e:
-                print(f"[DreamerBridge] ERROR during inference: {e}")
-                import traceback
-                traceback.print_exc()
-                time.sleep(0.1)
-                continue
+
+def main():
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--logdir', required=True, help='Path to DreamerV3 checkpoint')
+    parser.add_argument('--hz', type=float, default=10.0, help='Control frequency')
+    args = parser.parse_args()
+    
+    client = DreamerZMQClient(args.logdir, args.hz)
+    client.run()
 
 
 if __name__ == "__main__":
-    logdir = os.getenv("DREAMER_LOGDIR", "/home/xavie/logdir/dreamer/20251109T171831")
-    bridge = DreamerInferenceBridge(logdir=logdir, hz=10.0)
-    bridge.run()
+    main()
