@@ -113,7 +113,10 @@ def train(make_agent, make_replay, make_env, make_stream, make_logger, args):
       logger.add({'timer': elements.timer.stats()['summary']})
       logger.write()
 
-    if should_save(step):
+    if (step.value % args.save_every == 0) and (step.value > 0):
+      # --- NEW LOGGING ---
+      elements.print(f'[INFO] Triggering checkpoint save at step {step.value}')
+      # -------------------
       cp.save()
 
   logger.close()
