@@ -36,7 +36,7 @@ class DreamerZMQClient:
         
         # Action normalization factors (IMPORTANT: compute from training data!)
         # Run compute_action_scale.py to get these values
-        self.action_scale = np.ones(5)  # [x, y, z, wrist, gripper]
+        self.action_scale = np.array([0.021972, 0.026301, 0.041695, 11.62197, 1.0])  # [x, y, z, wrist, gripper]
         # Example: self.action_scale = np.array([0.05, 0.05, 0.05, 10.0, 1.0])
         
         # Workspace limits (adjust to your robot's workspace)
