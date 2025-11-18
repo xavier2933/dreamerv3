@@ -36,7 +36,7 @@ class DreamerZMQClient:
         
         # Action normalization factors (IMPORTANT: compute from training data!)
         # Run compute_action_scale.py to get these values
-        self.action_scale = np.array([0.021972, 0.026301, 0.041695, 11.62197, 1.0])  # [x, y, z, wrist, gripper]
+        self.action_scale = np.array([0.041028, 0.055041, 0.046091, 13.39, 1.0])  # [x, y, z, wrist, gripper]
         # Example: self.action_scale = np.array([0.05, 0.05, 0.05, 10.0, 1.0])
         
         # Workspace limits (adjust to your robot's workspace)
@@ -215,9 +215,21 @@ class DreamerZMQClient:
         print("[INFO] Creating agent")
         agent = dreamer_agent.Agent(obs_space, act_space, config)
         
-        # Load checkpoint
-        ckpt_dir = ckpt_path / "ckpt"
-        if ckpt_dir.exists():
+        # Load checkpoint - FIXED: look in cpkt_cache instead of ckpt
+        # Try both possible checkpoint directories
+        ckpt_dirs = [
+            ckpt_path / "cpkt_cache",  # Your custom location
+            ckpt_path / "ckpt"          # Default location
+        ]
+        
+        checkpoint_loaded = False
+        for ckpt_dir in ckpt_dirs:
+            if not ckpt_dir.exists():
+                continue
+                
+            print(f"[INFO] Checking for checkpoints in {ckpt_dir}")
+            
+            # First try to read the 'latest' file
             latest_file = ckpt_dir / "latest"
             latest_name = None
             if latest_file.exists():
@@ -225,14 +237,32 @@ class DreamerZMQClient:
                     content = f.read().strip()
                     if content:
                         latest_name = content
+                        print(f"[INFO] Found latest checkpoint name: {latest_name}")
             
+            # If no 'latest' file, find the highest numbered subdirectory
             if not latest_name:
-                subdirs = [d for d in ckpt_dir.iterdir() if d.is_dir()]
+                subdirs = [d for d in ckpt_dir.iterdir() if d.is_dir() and d.name != 'ckpt']
                 if subdirs:
-                    latest_name = sorted(subdirs)[-1].name
+                    # Sort numerically if possible, otherwise alphabetically
+                    try:
+                        latest_name = sorted(subdirs, key=lambda x: int(x.name))[-1].name
+                    except ValueError:
+                        latest_name = sorted(subdirs)[-1].name
+                    print(f"[INFO] Found checkpoint directory: {latest_name}")
             
             if latest_name:
-                agent_pkl = ckpt_dir / latest_name / "agent.pkl"
+                # The actual checkpoint might be in a timestamped subdirectory
+                checkpoint_base = ckpt_dir / latest_name
+                
+                # Check if there's a further subdirectory (like 20251117T214832F815182)
+                subdirs = [d for d in checkpoint_base.iterdir() if d.is_dir()]
+                if subdirs:
+                    checkpoint_dir = subdirs[0]
+                    print(f"[INFO] Found timestamped checkpoint: {checkpoint_dir.name}")
+                else:
+                    checkpoint_dir = checkpoint_base
+                
+                agent_pkl = checkpoint_dir / "agent.pkl"
                 if agent_pkl.exists():
                     print(f"[INFO] Loading weights from {agent_pkl}")
                     import pickle
@@ -245,10 +275,17 @@ class DreamerZMQClient:
                         agent.load(agent_state)
                     else:
                         agent.__dict__.update(agent_state)
-                    print("[INFO] Checkpoint loaded!")
+                    print("[INFO] Checkpoint loaded successfully!")
+                    checkpoint_loaded = True
+                    break
+                else:
+                    print(f"[WARNING] agent.pkl not found at {agent_pkl}")
+        
+        if not checkpoint_loaded:
+            print("[WARNING] No checkpoint loaded - using randomly initialized agent")
         
         return agent
-    
+
     def _parse_obs_from_ros(self, obs_dict):
         """Convert ROS observations to DreamerV3 format (batched)."""
         obs = {}

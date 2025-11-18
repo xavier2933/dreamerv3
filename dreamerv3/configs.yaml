@@ -83,6 +83,8 @@ defaults:
     expect_devices: 0
     enable_policy: True
     coordinator_address: ''
+    profiler: false   # ← ADD THIS (correct key)
+
 
   agent:
     loss_scales: {rec: 1.0, rew: 1.0, con: 1.0, dyn: 1.0, rep: 0.1, policy: 1.0, value: 1.0, repval: 0.3}
@@ -221,60 +223,53 @@ debug:
     .*\.blocks: 4
     .*\.depth: 2
 
-arm:
-  task: arm_offline
-  
-  # Point to parent directory containing demo1/, demo2/, demo3/, etc.
-  env.arm.data_dir: /home/xavie/dreamer/dreamerv3/data/demos/
-  
-  # Use size1m preset for small model
-  <<: *size1m
-  
-  # Offline learning - adjust based on total data size
-  batch_size: 8
-  batch_length: 32
-  report_length: 16
-  
-  replay.size: 2e3  # Increased for more data
-  replay.online: False
-  
-  run.steps: 300000  # More steps for more data
-  run.envs: 1
-  run.eval_envs: 0
-  run.eval_eps: 0
-  run.train_ratio: 64
-  run.log_every: 50
-  run.report_every: 200
-  run.save_every: 1000
-
 arm_interactive:
   task: arm_int
 
-  env:
-    arm:
-      data_dir: /home/xavie/dreamer/dreamerv3/data/demos/
+  env.arm.data_dir: /home/xavie/dreamer/dreamerv3/data/demos/
 
   <<: *size1m
 
-  batch_size: 16
-  batch_length: 32
+  batch_size: 32
+  batch_length: 16
   report_length: 16
 
+
+
   replay:
-    size: 1e5
-    online: True
+    size: 20000
+    online: False
 
   run:
-    steps: 30000
+    steps: 200000      # 300k is fine but 200k is usually enough
     envs: 1
     eval_envs: 0
     eval_eps: 0
-    train_ratio: 16
+    train_ratio: 2     # STABILITY FIX
     log_every: 50
     report_every: 200
-    # save_every: 1000   # ← does *NOT* control checkpoints
-
-
     save_every: 1000
 
+  agent:
+    opt:
+      lr: 1e-5
+      agc: 0.3
+      beta1: 0.9
+      beta2: 0.999
+      eps: 1e-20
+      wd: 0.0
+      schedule: const
+      momentum: True
+      warmup: 1000
+
+    # CRITICAL FIX: strong rep loss
+    loss_scales:
+      rec: 1.0
+      rew: 1.0
+      con: 1.0
+      dyn: 1.0
+      rep: 1.0       # <--- increased
+      policy: 1.0
+      value: 1.0
+      repval: 0.5    # <--- slightly increased
 
