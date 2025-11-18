@@ -2,12 +2,13 @@ import numpy as np
 
 def compute_reward(obs):
     """
-    REBALANCED reward function for block pickup task.
+    FIXED reward function for block pickup task.
     
-    Key changes:
-    1. Much smaller distance penalty (doesn't dominate)
-    2. Progressive rewards for getting closer
-    3. Bigger success bonuses to make goal attractive
+    Key fixes:
+    1. Reduced distance penalty to not dominate
+    2. Increased success rewards to make them attractive
+    3. Added height-based shaping reward
+    4. Made gripper closing rewarding when near block
     """
     reward = 0.0
 
@@ -35,32 +36,26 @@ def compute_reward(obs):
     gripper_closed = (gripper_state < 0.5)
     holding_block = has_contact and gripper_closed
 
-    # === Distance-based reward (REBALANCED) ===
+    # === Distance-based reward (only when not holding) ===
     if target_pos is not None and block_pos is not None:
         distance = np.linalg.norm(target_pos - block_pos)
         
         if not holding_block:
-            # MUCH smaller penalty, with progressive rewards for getting close
-            if distance > 0.5:
-                reward += 0
-                # reward += -0.1 * distance  # Far away: small penalty
-            elif distance > 0.2:
-                reward += 0.5  # Getting closer: small reward
-            elif distance > 0.1:
-                reward += 1.0  # Close: bigger reward
-            else:
-                reward += 2.0  # Very close: big reward
+            # Smaller penalty, shaped to encourage approach
+            # Cap at 1.0m distance to avoid huge penalties
+            capped_distance = min(distance, 1.0)
+            reward += -0.5 * capped_distance
         else:
-            # Maintaining grip
-            reward += 1.0  # Increased from 0.5
+            # Small bonus for maintaining good grip
+            reward += 0.5
 
     # === Contact rewards ===
     if has_contact:
-        reward += 3.0  # Increased from 2.0
+        reward += 2.0  # Reward making contact
         
         # Extra reward if gripper is closed while in contact
         if gripper_closed:
-            reward += 5.0  # Increased from 3.0 (total +8.0 for grasping)
+            reward += 3.0  # Total +5.0 for grasping
 
     # === Height-based rewards (the main goal) ===
     if block_pos is not None and holding_block:
@@ -68,16 +63,17 @@ def compute_reward(obs):
         
         # Progressive height rewards
         if block_height > 0.05:  # Lifted off table
-            reward += 10.0  # Increased from 5.0
+            reward += 5.0
         
         if block_height > 0.15:  # Partially lifted
-            reward += 10.0  # Increased from 5.0
+            reward += 5.0
         
         if block_height > 0.25:  # Success!
-            reward += 30.0  # Increased from 20.0
+            reward += 20.0  # Big reward for success
             
         # Additional shaping: reward any height gain
-        reward += 20.0 * max(0, block_height - 0.05)  # Increased from 10.0
+        # (assumes table is at z=0)
+        reward += 10.0 * max(0, block_height)
 
     return float(reward)
 
@@ -113,22 +109,15 @@ if __name__ == "__main__":
     
     # Simulate a successful pickup sequence
     scenarios = [
-        ("Start: far from block (0.3m)", {
+        ("Start: arm far from block", {
             'target_pose': np.array([0.5, 0.5, 0.3, 0, 0, 0, 1]),
             'block_pose': np.array([0.3, 0.3, 0.0, 0, 0, 0, 1]),
-            'gripper_state': np.array([1.0]),
+            'gripper_state': np.array([1.0]),  # open
             'left_contact': np.array([0.0]),
             'right_contact': np.array([0.0])
         }),
-        ("Approaching (0.15m away)", {
-            'target_pose': np.array([0.35, 0.35, 0.05, 0, 0, 0, 1]),
-            'block_pose': np.array([0.3, 0.3, 0.0, 0, 0, 0, 1]),
-            'gripper_state': np.array([1.0]),
-            'left_contact': np.array([0.0]),
-            'right_contact': np.array([0.0])
-        }),
-        ("Close (0.05m away)", {
-            'target_pose': np.array([0.31, 0.31, 0.02, 0, 0, 0, 1]),
+        ("Approaching block", {
+            'target_pose': np.array([0.3, 0.3, 0.05, 0, 0, 0, 1]),
             'block_pose': np.array([0.3, 0.3, 0.0, 0, 0, 0, 1]),
             'gripper_state': np.array([1.0]),
             'left_contact': np.array([0.0]),
@@ -144,7 +133,7 @@ if __name__ == "__main__":
         ("Grasping (closed gripper)", {
             'target_pose': np.array([0.3, 0.3, 0.02, 0, 0, 0, 1]),
             'block_pose': np.array([0.3, 0.3, 0.0, 0, 0, 0, 1]),
-            'gripper_state': np.array([0.0]),
+            'gripper_state': np.array([0.0]),  # closed
             'left_contact': np.array([1.0]),
             'right_contact': np.array([1.0])
         }),

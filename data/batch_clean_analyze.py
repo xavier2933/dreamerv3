@@ -11,8 +11,8 @@ def run(cmd):
         print(f"✅ Done: {' '.join(cmd)}")
 
 def main():
-    bags_dir = "bags/success"
-    output_root = "demos/success"
+    bags_dir = "bags/explore"
+    output_root = "demos/explore"
 
     # Ensure output directory exists
     os.makedirs(output_root, exist_ok=True)
