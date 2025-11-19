@@ -88,7 +88,7 @@ class DreamerRosBridge(Node):
         # === ROS Subscriptions (collecting observations) ===
         self.create_subscription(JointState, "/joint_states", self.cb_joint_states, 10)
         self.create_subscription(Pose, "/block_pose", self.cb_block_pose, 10)
-        self.create_subscription(Pose, "/unity_target_pose", self.cb_target_pose, 10)
+        self.create_subscription(Pose, "/target_pose", self.cb_target_pose, 10)
         self.create_subscription(Float32, "/wrist_angle", self.cb_wrist_angle, 10)
         self.create_subscription(Bool, "/gripper_command", self.cb_gripper_state, 10)
         self.create_subscription(Bool, "/left_contact_detected", self.cb_left_contact, 10)

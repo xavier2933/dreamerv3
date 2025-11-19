@@ -34,10 +34,8 @@ class DreamerZMQClient:
         self.current_wrist_angle = 0.0
         self.current_gripper_state = 0.0
         
-        # Action normalization factors (IMPORTANT: compute from training data!)
-        # Run compute_action_scale.py to get these values
+        # Action normalization factors (computed from training data)
         self.action_scale = np.array([0.041028, 0.055041, 0.046091, 13.39, 1.0])  # [x, y, z, wrist, gripper]
-        # Example: self.action_scale = np.array([0.05, 0.05, 0.05, 10.0, 1.0])
         
         # Workspace limits (adjust to your robot's workspace)
         self.pos_min = np.array([-2.0, -2.0, -2.0])
@@ -48,15 +46,6 @@ class DreamerZMQClient:
         # Track initialization
         self.initialized = False
         self.step_count = 0
-        
-        # Movement settling parameters
-        self.position_threshold = 0.02  # 2cm - consider "reached" if within this distance
-        self.wrist_threshold = 2.0      # 2 degrees
-        self.max_wait_steps = 50        # Maximum steps to wait (5 seconds at 10Hz)
-        self.waiting_for_arrival = False
-        self.wait_counter = 0
-        self.last_commanded_pos = None
-        self.last_commanded_wrist = None
         
         # ZeroMQ setup
         print("[INFO] Setting up ZeroMQ connections...")
@@ -323,6 +312,8 @@ class DreamerZMQClient:
     
     def run(self):
         """Main control loop."""
+        from embodied.envs.reward_function import compute_reward
+        
         print("\n[INFO] Starting control loop...")
         
         last_step_time = time.time()
@@ -356,40 +347,25 @@ class DreamerZMQClient:
                         self.current_target_pos = np.array(obs_dict.get('target_pose', [0, 0, 0])[:3])
                         self.current_wrist_angle = obs_dict.get('wrist_angle', [0])[0]
                         self.current_gripper_state = obs_dict.get('gripper_state', [0])[0]
-                        self.last_commanded_pos = self.current_target_pos.copy()
-                        self.last_commanded_wrist = self.current_wrist_angle
                     
-                    # Check if we're waiting for the arm to reach the previous target
-                    if self.waiting_for_arrival and self.last_commanded_pos is not None:
-                        current_pos = np.array(obs_dict.get('target_pose', [0, 0, 0])[:3])
-                        current_wrist = obs_dict.get('wrist_angle', [0])[0]
-                        
-                        pos_error = np.linalg.norm(current_pos - self.last_commanded_pos)
-                        wrist_error = abs(current_wrist - self.last_commanded_wrist)
-                        
-                        self.wait_counter += 1
-                        
-                        # Check if arrived or timeout
-                        arrived = (pos_error < self.position_threshold and 
-                                 wrist_error < self.wrist_threshold)
-                        timeout = self.wait_counter >= self.max_wait_steps
-                        
-                        if arrived:
-                            print(f"[Step {self.step_count}] ✓ Arrived (err: {pos_error*1000:.1f}mm, {wrist_error:.1f}°)")
-                            self.waiting_for_arrival = False
-                            self.wait_counter = 0
-                        elif timeout:
-                            print(f"[Step {self.step_count}] ⏱ Timeout waiting (err: {pos_error*1000:.1f}mm, {wrist_error:.1f}°)")
-                            self.waiting_for_arrival = False
-                            self.wait_counter = 0
-                        else:
-                            # Still waiting, skip inference this cycle
-                            if self.wait_counter % 10 == 0:
-                                print(f"[Step {self.step_count}] ⏳ Waiting... (err: {pos_error*1000:.1f}mm, {wrist_error:.1f}°)")
-                            continue
+                    # --- Closed-Loop Update ---
+                    # Always update current state from observation to prevent drift
+                    observed_target = np.array(obs_dict.get('target_pose', [0]*7)[:3])
+                    # Simple validity check (avoid updating if target is all zeros/invalid)
+                    if np.linalg.norm(observed_target) > 0.001:
+                        self.current_target_pos = observed_target
+                    
+                    self.current_wrist_angle = obs_dict.get('wrist_angle', [0])[0]
+                    self.current_gripper_state = obs_dict.get('gripper_state', [0])[0]
+                    
+                    # Compute and log reward
+                    # Flatten obs for reward function (it expects single timestep dict, not batched)
+                    flat_obs = {k: np.array(v) for k, v in obs_dict.items()}
+                    current_reward = compute_reward(flat_obs)
                     
                     # Convert to DreamerV3 format
                     obs = self._parse_obs_from_ros(obs_dict)
+                    obs['reward'] = np.array([current_reward], dtype=np.float32)
                     
                     # Run policy
                     result = self.agent.policy(self.agent_state, obs, mode='eval')
@@ -417,7 +393,7 @@ class DreamerZMQClient:
                     # Un-normalize
                     delta = action * self.action_scale
                     
-                    # Integrate from our memory of commanded state (not observed)
+                    # Integrate
                     new_pos = self.current_target_pos + delta[:3]
                     new_wrist = self.current_wrist_angle + delta[3]
                     new_gripper = np.clip(self.current_gripper_state + delta[4], 0.0, 1.0)
@@ -425,11 +401,6 @@ class DreamerZMQClient:
                     # Apply workspace limits
                     new_pos = np.clip(new_pos, self.pos_min, self.pos_max)
                     new_wrist = np.clip(new_wrist, self.wrist_min, self.wrist_max)
-                    
-                    # Debug: check for large jumps
-                    pos_change = np.linalg.norm(new_pos - self.current_target_pos)
-                    if pos_change > 0.5:  # More than 0.5m change
-                        print(f"[WARNING] Large position jump: {pos_change:.3f}m, delta={delta[:3]}")
                     
                     # Package action for ROS bridge
                     # Bridge expects [x, y, z, wrist, gripper] as absolute positions
@@ -446,27 +417,11 @@ class DreamerZMQClient:
                     # Send action to ROS bridge
                     self.pub.send_string(json.dumps(action_msg))
                     
-                    # Update tracking state
-                    self.last_commanded_pos = new_pos.copy()
-                    self.last_commanded_wrist = new_wrist
-                    self.current_target_pos = new_pos
-                    self.current_wrist_angle = new_wrist
-                    self.current_gripper_state = new_gripper
-                    
-                    # Start waiting for arrival
-                    self.waiting_for_arrival = True
-                    self.wait_counter = 0
-                    
                     self.step_count += 1
                     
                     if self.step_count % 10 == 0:
-                        # Get block and target info from observations
-                        block_pos = obs_dict.get('block_pose', [0]*7)[:3]
-                        obs_target = obs_dict.get('target_pose', [0]*7)[:3]
-                        print(f"[Step {self.step_count}]")
-                        print(f"  Block: {np.round(block_pos, 3)}")
-                        print(f"  Observed target: {np.round(obs_target, 3)}")
-                        print(f"  Commanded: {np.round(new_pos, 3)}, wrist={new_wrist:.2f}")
+                        print(f"[Step {self.step_count}] Reward: {current_reward:.3f}")
+                        print(f"  Cmd: {np.round(new_pos, 3)}")
                         print(f"  Delta: {np.round(delta[:3], 4)}")
                 
                 except zmq.Again:
