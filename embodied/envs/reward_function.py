@@ -60,6 +60,8 @@ class DipLiftReward:
             # Success condition: Y > 0.35
             if current_y > 0.35:
                 reward += 2.0 # Bonus for holding high
+                if np.random.rand() < 0.1: # Print 10% of the time to avoid spam
+                    print(f"[DipLiftReward] SUCCESS: LIFTED (y={current_y:.3f})")
                 
         return float(reward)
 

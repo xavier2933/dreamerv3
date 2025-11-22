@@ -132,27 +132,11 @@ class RealArm(embodied.Env):
             
         act = action['action']
         
-        # Un-normalize
-        delta = act * self.action_scale
-        
-        # Integrate
-        new_pos = self.current_target_pos + delta[:3]
-        new_wrist = self.current_wrist_angle + delta[3]
-        new_gripper = np.clip(self.current_gripper_state + delta[4], 0.0, 1.0)
-        
-        # Clip
-        new_pos = np.clip(new_pos, self.pos_min, self.pos_max)
-        new_wrist = np.clip(new_wrist, self.wrist_min, self.wrist_max)
-        
-        # 2. Send Action
+        # 2. Send Action (Raw Normalized Deltas)
+        # Bridge expects: [dx, dy, dz, dwrist, dgrip] in normalized space
+        # We simply pass the agent's output directly.
         action_msg = {
-            "action": [
-                float(new_pos[0]),
-                float(new_pos[1]),
-                float(new_pos[2]),
-                float(new_wrist),
-                float(new_gripper)
-            ]
+            "action": [float(x) for x in act]
         }
         self.pub.send_string(json.dumps(action_msg))
         

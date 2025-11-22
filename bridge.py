@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import json
+import time
 import zmq
 import numpy as np
 import rclpy
@@ -381,9 +382,10 @@ class DreamerRosBridge(Node):
         self.current_gripper = np.clip(self.current_gripper, 0.0, 1.0)
         
         # Clamp to workspace bounds (Unity Frame)
-        new_x = np.clip(new_x, -1.0, 1.0)
-        new_y = np.clip(new_y, 0.0, 1.0)
-        new_z = np.clip(new_z, -1.0, 1.0)
+        # User specified: X[-0.2, 0.2], Y[0.15, 0.5], Z[0.2, 0.5]
+        new_x = np.clip(new_x, -0.2, 0.2)
+        new_y = np.clip(new_y, 0.15, 0.5)
+        new_z = np.clip(new_z, 0.2, 0.5)
         new_wrist = np.clip(new_wrist, -180.0, 180.0)
         
         # Update tracked position

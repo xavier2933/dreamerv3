@@ -36,6 +36,8 @@ def main():
         'batch_size': 16,
         'jax.prealloc': False,
         'jax.platform': 'cuda',
+        'run.envs': 1,
+        'run.eval_envs': 0,
     }
     if args_cli.from_checkpoint:
         updates['run.from_checkpoint'] = args_cli.from_checkpoint
