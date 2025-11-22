@@ -9,4 +9,5 @@ data/bags
 *.pkl
 logs/*
 data/rollouts/*
+log_data/*
 ;

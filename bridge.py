@@ -4,13 +4,16 @@ import zmq
 import numpy as np
 import rclpy
 from rclpy.node import Node
-from geometry_msgs.msg import Pose
+from geometry_msgs.msg import Pose, TransformStamped
 from sensor_msgs.msg import JointState
 from std_msgs.msg import Float32, Bool
 import math
 import csv
 import os
-from rclpy.time import Time # Import for getting ROS time
+from rclpy.time import Time
+from tf2_ros import TransformException
+from tf2_ros.buffer import Buffer
+from tf2_ros.transform_listener import TransformListener
 
 # --- Helper Functions (unchanged) ---
 
@@ -46,6 +49,10 @@ def quaternion_multiply(q1, q2):
 class DreamerRosBridge(Node):
     def __init__(self):
         super().__init__("dreamer_ros_bridge")
+
+        # === TF Setup for Dynamic Initialization ===
+        self.tf_buffer = Buffer()
+        self.tf_listener = TransformListener(self.tf_buffer, self)
 
         # === CSV LOGGING SETUP ===
         self.log_dir = os.path.join(os.getcwd(), "log_data")
@@ -95,13 +102,17 @@ class DreamerRosBridge(Node):
         self.create_subscription(Bool, "/right_contact_detected", self.cb_right_contact, 10)
 
         # === ROS Publishers (sending Dreamer's actions) ===
+        # Publish to /bc_target_pose (Unity Frame) as requested
         self.pub_target = self.create_publisher(Pose, "/bc_target_pose", 10)
         self.pub_gripper = self.create_publisher(Bool, "/gripper_cmd_aut", 10)
+        self.pub_wrist = self.create_publisher(Float32, "/bc_wrist_angle", 10)
+        self.pub_aut = self.create_publisher(Bool, "/autonomous_mode", 10)
+        self.pub_reset = self.create_publisher(Bool, "/reset_env", 10)
 
         # Cache for sending complete obs set to Dreamer via ZeroMQ (original purpose)
         self.obs_cache = {} 
 
-        # === ZeroMQ sockets (unchanged) ===
+        # === ZeroMQ sockets ===
         ctx = zmq.Context()
         self.pub = ctx.socket(zmq.PUB)
         self.pub.bind("tcp://127.0.0.1:5556")
@@ -111,10 +122,22 @@ class DreamerRosBridge(Node):
 
         self.timer = self.create_timer(0.1, self.timer_callback)
         
-        # Debug tracking (unchanged)
+        # Track current target for delta actions
+        # Initialize to None, will be set by TF or first message
+        self.current_target_pos = None
+        self.current_wrist = None # Will be init from topic or default
+        self.current_gripper = 0.0 # Track gripper state (0.0 = closed, 1.0 = open)
+        
+        # Action scaling based on demo statistics
+        self.position_delta_scale = 0.05  # 5cm per unit action
+        self.wrist_delta_scale = 2.0      # 2° per unit action
+        
+        # Debug tracking
         self.received_topics = set()
         
         self.get_logger().info("🤖 Dreamer ROS bridge ready.")
+        self.get_logger().info(f"   Position delta scale: {self.position_delta_scale*100:.1f}cm per unit")
+        self.get_logger().info(f"   Wrist delta scale: {self.wrist_delta_scale:.1f}° per unit")
 
     def __del__(self):
         """Ensure file handles are closed when the node is destroyed."""
@@ -125,10 +148,52 @@ class DreamerRosBridge(Node):
             self.act_csv_file.close()
             self.get_logger().info("Action log closed.")
 
+    def get_start_pose(self):
+        """
+        Try to get the current robot pose from TF and convert to Unity frame.
+        Returns True if successful, False otherwise.
+        """
+        try:
+            # Look up transform from world to panda_hand
+            # We use Time() to get the latest available transform
+            t = self.tf_buffer.lookup_transform(
+                'world',
+                'panda_hand',
+                Time())
+            
+            ros_x = t.transform.translation.x
+            ros_y = t.transform.translation.y
+            ros_z = t.transform.translation.z
+            
+            # Convert ROS -> Unity
+            # UnityMoveItTrajectoryBridge logic: ros_x = unity_z, ros_y = -unity_x, ros_z = unity_y
+            # Inverse:
+            # unity_x = -ros_y
+            # unity_y = ros_z
+            # unity_z = ros_x
+            
+            unity_x = -ros_y
+            unity_y = ros_z
+            unity_z = ros_x
+            
+            self.current_target_pos = np.array([unity_x, unity_y, unity_z])
+            
+            # Initialize wrist if not yet set from topic
+            if self.current_wrist is None:
+                self.current_wrist = 0.0
+                self.get_logger().info("ℹ Defaulting start wrist to 0.0")
+            
+            self.get_logger().info(f"✓ Initialized start pose from TF:")
+            self.get_logger().info(f"  ROS:   [{ros_x:.3f}, {ros_y:.3f}, {ros_z:.3f}]")
+            self.get_logger().info(f"  Unity: [{unity_x:.3f}, {unity_y:.3f}, {unity_z:.3f}]")
+            return True
+            
+        except TransformException as ex:
+            # TF might not be ready yet
+            return False
+
     def log_observation(self, current_time: Time):
         """Logs the latest state of all observations to the CSV."""
-        # Note: You can also log only when a specific topic updates, 
-        # but logging all fields ensures a comprehensive timeline.
         timestamp = [current_time.nanoseconds // 10**9, current_time.nanoseconds % 10**9]
         
         row = timestamp + \
@@ -141,14 +206,14 @@ class DreamerRosBridge(Node):
               self.data_cache["right_contact"]
               
         self.obs_csv_writer.writerow(row)
-        self.obs_csv_file.flush() # Ensure data is written to disk
+        self.obs_csv_file.flush()
 
-    # === Observation Callbacks (Modified to log data) ===
+    # === Observation Callbacks ===
     def cb_joint_states(self, msg: JointState):
         current_time = self.get_clock().now()
         data = list(msg.position)
-        self.obs_cache["arm_joints"] = data # For ZeroMQ
-        self.data_cache["arm_joints"] = data # For CSV
+        self.obs_cache["arm_joints"] = data
+        self.data_cache["arm_joints"] = data
         self.log_observation(current_time)
         if "arm_joints" not in self.received_topics:
             self.received_topics.add("arm_joints")
@@ -157,8 +222,8 @@ class DreamerRosBridge(Node):
     def cb_block_pose(self, msg: Pose):
         current_time = self.get_clock().now()
         data = pose_to_array(msg)
-        self.obs_cache["block_pose"] = data # For ZeroMQ
-        self.data_cache["block_pose"] = data # For CSV
+        self.obs_cache["block_pose"] = data
+        self.data_cache["block_pose"] = data
         self.log_observation(current_time)
         if "block_pose" not in self.received_topics:
             self.received_topics.add("block_pose")
@@ -167,8 +232,11 @@ class DreamerRosBridge(Node):
     def cb_target_pose(self, msg: Pose):
         current_time = self.get_clock().now()
         data = pose_to_array(msg)
-        self.obs_cache["target_pose"] = data # For ZeroMQ
-        self.data_cache["target_pose"] = data # For CSV
+        self.obs_cache["target_pose"] = data
+        self.data_cache["target_pose"] = data
+        
+        # DON'T update self.current_target_pos here - it creates a feedback loop
+        
         self.log_observation(current_time)
         if "target_pose" not in self.received_topics:
             self.received_topics.add("target_pose")
@@ -177,8 +245,14 @@ class DreamerRosBridge(Node):
     def cb_wrist_angle(self, msg: Float32):
         current_time = self.get_clock().now()
         data = [msg.data]
-        self.obs_cache["wrist_angle"] = data # For ZeroMQ
-        self.data_cache["wrist_angle"] = data # For CSV
+        self.obs_cache["wrist_angle"] = data
+        self.data_cache["wrist_angle"] = data
+        
+        # Initialize wrist if we haven't started moving yet
+        if self.current_wrist is None:
+            self.current_wrist = msg.data
+            self.get_logger().info(f"✓ Initialized start wrist from topic: {self.current_wrist:.1f}")
+        
         self.log_observation(current_time)
         if "wrist_angle" not in self.received_topics:
             self.received_topics.add("wrist_angle")
@@ -187,8 +261,8 @@ class DreamerRosBridge(Node):
     def cb_gripper_state(self, msg: Bool):
         current_time = self.get_clock().now()
         data = [float(msg.data)]
-        self.obs_cache["gripper_state"] = data # For ZeroMQ
-        self.data_cache["gripper_state"] = data # For CSV
+        self.obs_cache["gripper_state"] = data
+        self.data_cache["gripper_state"] = data
         self.log_observation(current_time)
         if "gripper_state" not in self.received_topics:
             self.received_topics.add("gripper_state")
@@ -197,8 +271,8 @@ class DreamerRosBridge(Node):
     def cb_left_contact(self, msg: Bool):
         current_time = self.get_clock().now()
         data = [float(msg.data)]
-        self.obs_cache["left_contact"] = data # For ZeroMQ
-        self.data_cache["left_contact"] = data # For CSV
+        self.obs_cache["left_contact"] = data
+        self.data_cache["left_contact"] = data
         self.log_observation(current_time)
         if "left_contact" not in self.received_topics:
             self.received_topics.add("left_contact")
@@ -207,17 +281,21 @@ class DreamerRosBridge(Node):
     def cb_right_contact(self, msg: Bool):
         current_time = self.get_clock().now()
         data = [float(msg.data)]
-        self.obs_cache["right_contact"] = data # For ZeroMQ
-        self.data_cache["right_contact"] = data # For CSV
+        self.obs_cache["right_contact"] = data
+        self.data_cache["right_contact"] = data
         self.log_observation(current_time)
         if "right_contact" not in self.received_topics:
             self.received_topics.add("right_contact")
             self.get_logger().info("✓ Receiving right_contact")
 
-    # --- Timer and Action Publishing (Modified) ---
+    # --- Timer and Action Publishing ---
     
     def timer_callback(self):
-        # Send observations to Dreamer process (unchanged)
+        # Try to initialize start pose if not done yet
+        if self.current_target_pos is None:
+            self.get_start_pose()
+
+        # Send observations to Dreamer
         if self.obs_cache:
             msg = json.dumps(self.obs_cache)
             self.pub.send_string(msg)
@@ -228,35 +306,100 @@ class DreamerRosBridge(Node):
                 self.get_logger().info("✓ Sending complete observation set to Dreamer")
                 self.received_topics.add("_logged_complete")
 
-        # Receive action updates from Dreamer if available (unchanged logic)
+        # Receive actions from Dreamer
         try:
             while self.sub.poll(timeout=0):
                 msg_str = self.sub.recv_string(flags=zmq.NOBLOCK)
                 data = json.loads(msg_str)
-                action = np.array(data["action"], dtype=np.float32)
-                self.get_logger().info(f"📥 Received action from Dreamer: {action}")
-                self.publish_actions(action)
+                
+                if "reset" in data and data["reset"]:
+                    reset_msg = Bool()
+                    reset_msg.data = True
+
+                    false_msg = Bool()
+                    false_msg.data = False
+
+                    # 1. Publish false immediately
+                    self.pub_aut.publish(false_msg)
+
+                    # 2. Wait 0.5 seconds
+                    time.sleep(0.5)
+
+                    # 3. Publish TRUE reset
+                    self.pub_reset.publish(reset_msg)
+                    self.get_logger().info("↻ Reset command sent TRUE")
+
+                    # 4. Wait 3 seconds before allowing actions again
+                    time.sleep(3.0)
+                    self.pub_aut.publish(reset_msg)
+
+                    # 5. Clear states to force re-sync
+                    self.current_target_pos = None
+                    self.current_wrist = None
+                    self.current_gripper = 0.0
+
+                    self.get_logger().info("↻ Reset complete - waiting for TF sync") 
+                if "action" in data:
+                    action = np.array(data["action"], dtype=np.float32)
+                    self.publish_actions(action)
         except zmq.Again:
             pass
 
     def publish_actions(self, act):
         """
-        Publish Dreamer's actions to ROS and log them to CSV.
-        Actions are [dx, dy, dz, wrist, grip]
+        Publish Dreamer's actions to ROS.
+        Actions are NORMALIZED DELTAS in [-1, 1]: [dx, dy, dz, dwrist, dgrip]
         """
-        # --- ROS Publishing Logic (unchanged) ---
-        dx, dy, dz, wrist, grip = act[:5]
+        if self.current_target_pos is None:
+            # Can't publish if we don't know where we are
+            return
+        
+        if self.current_wrist is None:
+            # Should have been set by get_start_pose or cb_wrist_angle, but just in case
+            self.current_wrist = 0.0
+
+        dx_norm, dy_norm, dz_norm, dwrist_norm, grip_delta = act[:5]
+        
+        # Scale normalized deltas to real-world units
+        dx = dx_norm * self.position_delta_scale
+        dy = dy_norm * self.position_delta_scale
+        dz = dz_norm * self.position_delta_scale
+        dwrist = dwrist_norm * self.wrist_delta_scale
+        
+        # Apply deltas to current position (Unity Frame)
+        new_x = self.current_target_pos[0] + dx
+        new_y = self.current_target_pos[1] + dy
+        new_z = self.current_target_pos[2] + dz
+        new_wrist = self.current_wrist + dwrist
+        
+        # Accumulate gripper state (0.0 to 1.0)
+        # Assuming grip_delta is also normalized [-1, 1] or similar?
+        # Cleaner.py says: actions[:, 4] is gripper (binary), keep as-is.
+        # But cleaner.py does: actions = np.diff(eff, ...).
+        # So it IS a delta. If it was 0->1, delta is 1. If 1->0, delta is -1.
+        self.current_gripper += grip_delta
+        self.current_gripper = np.clip(self.current_gripper, 0.0, 1.0)
+        
+        # Clamp to workspace bounds (Unity Frame)
+        new_x = np.clip(new_x, -1.0, 1.0)
+        new_y = np.clip(new_y, 0.0, 1.0)
+        new_z = np.clip(new_z, -1.0, 1.0)
+        new_wrist = np.clip(new_wrist, -180.0, 180.0)
+        
+        # Update tracked position
+        self.current_target_pos = np.array([new_x, new_y, new_z])
+        self.current_wrist = new_wrist
 
         # Construct orientation from wrist angle
         base_down_q = np.array([0.7071068, -0.7071068, 0.0, 0.0])
-        q = quaternion_from_euler_z(math.radians(wrist))
+        q = quaternion_from_euler_z(math.radians(new_wrist))
         final_q = quaternion_multiply(q, base_down_q)
 
-        # Create pose message
+        # Create and publish pose message (Unity Frame)
         pose_msg = Pose()
-        pose_msg.position.x = float(dx)
-        pose_msg.position.y = float(dy)
-        pose_msg.position.z = float(dz)
+        pose_msg.position.x = float(new_x)
+        pose_msg.position.y = float(new_y)
+        pose_msg.position.z = float(new_z)
         pose_msg.orientation.x = final_q[0]
         pose_msg.orientation.y = final_q[1]
         pose_msg.orientation.z = final_q[2]
@@ -266,24 +409,25 @@ class DreamerRosBridge(Node):
 
         # Publish gripper command
         grip_msg = Bool()
-        grip_msg.data = bool(grip > 0)
+        grip_msg.data = bool(self.current_gripper > 0.5)
         self.pub_gripper.publish(grip_msg)
         
+        # Publish wrist angle
+        wrist_msg = Float32()
+        wrist_msg.data = float(new_wrist)
+        self.pub_wrist.publish(wrist_msg)
+        
         self.get_logger().info(
-            f"📤 Published Dreamer actions: "
-            f"pos=[{dx:.3f}, {dy:.3f}, {dz:.3f}], "
-            f"wrist={wrist:.1f}°, grip={grip > 0}"
+            f"📤 Target (Unity): pos=[{new_x:.3f}, {new_y:.3f}, {new_z:.3f}], "
+            f"wrist={new_wrist:.1f}°, grip={grip_msg.data} "
+            f"(Δ=[{dx*100:.1f}, {dy*100:.1f}, {dz*100:.1f}]cm)"
         )
         
-        # --- CSV Logging Logic (New) ---
+        # CSV Logging
         current_time = self.get_clock().now()
         timestamp = [current_time.nanoseconds // 10**9, current_time.nanoseconds % 10**9]
-        
-        # Action log row: time + [dx, dy, dz, wrist, grip]
         self.act_csv_writer.writerow(timestamp + list(act[:5]))
         self.act_csv_file.flush()
-        
-        # Update the latest action data in the cache for plotting comparison
         self.data_cache["action"] = list(act[:5])
 
 

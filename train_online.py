@@ -79,13 +79,23 @@ def main():
     def make_replay(config, folder, mode='train'):
         # Simplified replay creation
         directory = elements.Path(config.logdir) / folder
-        return embodied.replay.Replay(
+        replay = embodied.replay.Replay(
             length=config.batch_length + config.replay_context,
             capacity=int(1e5),
             directory=directory,
             online=True,
             chunksize=1024,
         )
+        # Load existing data (e.g. demonstrations)
+        print(f"[Replay] Loading existing data from {directory}...")
+        replay.load()
+        print(f"[Replay] Loaded! Buffer now contains {len(replay)} items")
+        print(f"[Replay] Total chunks: {len(replay.chunks)}")
+        if len(replay) > 0:
+            print(f"[Replay] ✓ Demos successfully loaded into replay buffer")
+        else:
+            print(f"[Replay] ✗ WARNING: No items in replay buffer after load!")
+        return replay
 
     def make_logger(config):
         step = elements.Counter()

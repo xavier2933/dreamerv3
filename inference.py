@@ -393,6 +393,19 @@ class DreamerZMQClient:
                     # Un-normalize
                     delta = action * self.action_scale
                     
+                    # --- Action Smoothing (EMA) ---
+                    # Initialize if needed
+                    if not hasattr(self, 'action_ema'):
+                        self.action_ema = delta[:4].copy()
+                    
+                    # Smoothing factor (0.0 = no smoothing, 1.0 = no update)
+                    # 0.3 means we take 30% of new action, 70% of old action
+                    alpha = 0.3 
+                    self.action_ema = alpha * delta[:4] + (1 - alpha) * self.action_ema
+                    
+                    # Use smoothed delta for arm, raw for gripper
+                    delta = np.concatenate([self.action_ema, delta[4:]])
+                    
                     # Integrate
                     new_pos = self.current_target_pos + delta[:3]
                     new_wrist = self.current_wrist_angle + delta[3]

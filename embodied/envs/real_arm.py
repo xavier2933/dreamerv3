@@ -20,6 +20,10 @@ class RealArm(embodied.Env):
         self.wrist_min = -180.0
         self.wrist_max = 180.0
         
+        # Reward Function
+        from embodied.envs.reward_function import DipLiftReward
+        self.reward_fn = DipLiftReward()
+        
         # ZMQ Setup
         print(f"[RealArm] Connecting to ZMQ bridge at {ip}...")
         self.ctx = zmq.Context()
@@ -101,9 +105,8 @@ class RealArm(embodied.Env):
                     if obs[k].shape != space.shape:
                         obs[k] = obs[k].reshape(space.shape)
 
-        # Compute reward
-        from embodied.envs.reward_function import compute_reward
-        reward = compute_reward(obs)
+        # Compute reward using stateful function
+        reward = self.reward_fn(obs)
         
         obs['reward'] = np.float32(reward)
         obs['is_first'] = is_first
@@ -167,6 +170,10 @@ class RealArm(embodied.Env):
 
     def reset(self):
         print("[RealArm] Resetting...")
+        
+        # Reset reward function state
+        self.reward_fn.reset()
+        
         # Send reset command twice to ensure it goes through
         self.pub.send_string(json.dumps({"reset": True}))
         time.sleep(2.0)

@@ -109,16 +109,24 @@ def extract_rosbag(bag_path, topics, hz=10.0):
 
         obs[key] = interp(t_uniform)
 
-    # --- Compute actions (normalized deltas) ---
+    # --- Compute actions (fixed global scaling instead of per-trajectory) ---
     eff = np.hstack([
         obs.get("target_pose", np.zeros((len(t_uniform), 7)))[:, :3],
         obs.get("wrist_angle", np.zeros((len(t_uniform), 1))),
         obs.get("gripper_state", np.zeros((len(t_uniform), 1))),
     ])
     actions = np.diff(eff, axis=0, prepend=eff[0:1])
-    max_abs = np.abs(actions).max(axis=0)
-    max_abs[max_abs == 0] = 1.0
-    actions /= max_abs
+    
+    # Use FIXED scaling factors (matching bridge.py)
+    # Position: 5cm = 0.05m per unit action
+    # Wrist: 2° per unit action
+    # Gripper: binary, no scaling needed
+    position_scale = 0.05  # meters
+    wrist_scale = 2.0      # degrees
+    
+    actions[:, 0:3] /= position_scale  # Normalize position deltas
+    actions[:, 3] /= wrist_scale       # Normalize wrist deltas
+    # actions[:, 4] is gripper (binary), keep as-is
 
     # No combined contact or merged reward — only left/right contact
     left_contact = obs.get("left_contact", np.zeros((len(t_uniform), 1)))
