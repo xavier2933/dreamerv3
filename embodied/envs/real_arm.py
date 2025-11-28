@@ -12,17 +12,21 @@ class RealArm(embodied.Env):
         self.rate_duration = 1.0 / hz
         
         # Action scaling (must match inference.py)
-        self.action_scale = np.array([0.041028, 0.055041, 0.046091, 13.39, 1.0])
+        # Action scaling (must match inference.py)
+        # Reduced by 50% on 2025-11-25 to improve precision
+        self.action_scale = np.array([0.0205, 0.0275, 0.0230, 13.39, 1.0])
         
         # Workspace limits
-        self.pos_min = np.array([-2.0, -2.0, -2.0])
-        self.pos_max = np.array([2.0, 2.0, 2.0])
+        # Workspace limits (Must match bridge.py clamping!)
+        # Bridge: X[-0.2, 0.2], Y[0.15, 0.5], Z[0.2, 0.5]
+        self.pos_min = np.array([-0.2, 0.15, 0.2])
+        self.pos_max = np.array([0.2, 0.5, 0.5])
         self.wrist_min = -180.0
         self.wrist_max = 180.0
         
         # Reward Function
-        from embodied.envs.reward_function import DipLiftReward
-        self.reward_fn = DipLiftReward()
+        from embodied.envs.reward_function import SimpleReachReward
+        self.reward_fn = SimpleReachReward(target_pos=np.array([0.1, 0.35, 0.35]))
         
         # ZMQ Setup
         print(f"[RealArm] Connecting to ZMQ bridge at {ip}...")
