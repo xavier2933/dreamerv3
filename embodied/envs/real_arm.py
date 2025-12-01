@@ -78,8 +78,8 @@ class RealArm(embodied.Env):
                 msg_str = self.sub.recv_string()
                 obs_dict = json.loads(msg_str)
                 
-                # Check completeness
-                required = ['arm_joints', 'block_pose', 'actual_pose', 'wrist_angle',
+                # Check completeness - removed block_pose from strict requirement
+                required = ['arm_joints', 'actual_pose', 'wrist_angle',
                            'gripper_state', 'left_contact', 'right_contact']
                 if all(k in obs_dict for k in required):
                     return obs_dict
@@ -89,6 +89,11 @@ class RealArm(embodied.Env):
 
     def _parse_obs(self, obs_dict, is_first=False):
         obs = {}
+        
+        # Handle missing block_pose by defaulting to zeros
+        if 'block_pose' not in obs_dict:
+            obs_dict['block_pose'] = [0.0] * 7
+            
         for k, v in obs_dict.items():
             if k in self._obs_space:
                 val = np.array(v, dtype=np.float32)
@@ -132,6 +137,7 @@ class RealArm(embodied.Env):
             return self.reset()
             
         act = action['action']
+        print(f"[RealArm] Received action: {act}, shape: {act.shape}")
         
         # 2. Send Action (Raw Normalized Deltas)
         # Bridge expects: [dx, dy, dz, dwrist, dgrip] in normalized space

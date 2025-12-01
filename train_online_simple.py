@@ -18,8 +18,7 @@ class FilterObs(embodied.Wrapper):
     def __init__(self, env, keys_to_remove):
         super().__init__(env)
         self._keys_to_remove = keys_to_remove
-        self._obs_space = {k: v for k, v in env.obs_space.items()
-                           if k not in keys_to_remove}
+        self._obs_space = {k: v for k, v in env.obs_space.items() if k not in keys_to_remove}
                            
     @property
     def obs_space(self):
@@ -40,7 +39,6 @@ class SimplifyAction(embodied.Wrapper):
         # Original: 5 (dx, dy, dz, dwrist, dgrip)
         # New: 3 (dx, dy, dz)
         self._act_space = {
-
             'action': elements.Space(np.float32, (3,)),
             'reset': env.act_space['reset']
         }
@@ -52,11 +50,11 @@ class SimplifyAction(embodied.Wrapper):
     def step(self, action):
         # Pad action with 0.0 for wrist and gripper
         if 'action' in action:
+            action = action.copy()  # Copy first to avoid modifying original
             act = action['action']
 
             # [dx, dy, dz] -> [dx, dy, dz, 0.0, 0.0]
             padded = np.concatenate([act, np.zeros(2, dtype=np.float32)], axis=0)
-            action = action.copy()
             action['action'] = padded
         return self.env.step(action)
 
@@ -74,6 +72,7 @@ def main():
     configs = yaml.YAML(typ='safe').load(configs)
     config = elements.Config(configs['defaults'])
     config = config.update(configs['size1m'])
+
 
     updates = {
         # General Overrides
@@ -97,9 +96,7 @@ def main():
     }
 
     if args_cli.from_checkpoint:
-
         updates['run.from_checkpoint'] = args_cli.from_checkpoint
-
     config = config.update(updates)
     logdir = elements.Path(config.logdir)
     logdir.mkdir()
