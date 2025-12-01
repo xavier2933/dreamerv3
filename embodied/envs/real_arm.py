@@ -137,7 +137,6 @@ class RealArm(embodied.Env):
             return self.reset()
             
         act = action['action']
-        print(f"[RealArm] Received action: {act}, shape: {act.shape}")
         
         # 2. Send Action (Raw Normalized Deltas)
         # Bridge expects: [dx, dy, dz, dwrist, dgrip] in normalized space

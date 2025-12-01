@@ -81,16 +81,14 @@ class MoveAndGraspReward:
 
 
 class SimpleReachReward:
-    def __init__(self, target_pos=np.array([0.0, 0.3, 0.0])):
+    def __init__(self, target_pos=np.array([0.1, 0.35, 0.35])):
         self.target_pos = np.array(target_pos)
         self.best_distance = float('inf')
-        self.consecutive_success = 0
-        self.total_steps = 0
+        self.episode_start_distance = None
         
     def reset(self):
         self.best_distance = float('inf')
-        self.consecutive_success = 0
-        self.total_steps = 0
+        self.episode_start_distance = None
         print(f"[SimpleReachReward] Reset - Target: {self.target_pos}")
         
     def __call__(self, obs):
@@ -99,30 +97,20 @@ class SimpleReachReward:
             
         current_pos = np.atleast_1d(obs['actual_pose'])[:3]
         distance = np.linalg.norm(current_pos - self.target_pos)
-        self.total_steps += 1
         
-        # 1. Continuous (Proximity) Reward
-        BETA = 20.0 # Increased scaling factor
-        proximity_reward = np.exp(-BETA * distance)
-        reward = proximity_reward
-
-        # 2. Success/Persistence Tracking
-        SUCCESS_THRESHOLD = 0.01 # 1 cm
-        if distance < SUCCESS_THRESHOLD:
-            self.consecutive_success += 1
-            
-            # Optional: Small, smooth bonus for staying at the precise target (the "stay there" part)
-            # The term min(1.0, ...) is good to cap the max bonus.
-            persistence_bonus = min(1.0, self.consecutive_success * 0.01) 
-            reward += persistence_bonus
-            
-            # Increase the weight of the *exponential* term when successful to encourage staying put
-            # This is a key change: increase the reward for success-steps, but still keep it continuous.
-            reward *= 1.5 # Multiplicative boost for being in the target zone (e.g., 50% more reward)
-            
-        else:
-            self.consecutive_success = 0
-
-        # The final reward is now a continuous proximity reward + a continuous persistence bonus
-        # that gets a multiplicative boost inside the target zone.
+        # Track starting distance for normalization
+        if self.episode_start_distance is None:
+            self.episode_start_distance = distance
+        
+        # Daydreamer-style: Reward CUMULATIVE progress from start
+        # This is sparse but meaningful
+        progress_from_start = self.episode_start_distance - distance
+        reward = progress_from_start  # Simple linear reward for progress
+        
+        # Success bonus (sparse but impactful)
+        if distance < 0.02:  # 2cm
+            reward += 5.0
+            if distance < 0.01:  # 1cm - precise
+                reward += 10.0
+        
         return float(reward)

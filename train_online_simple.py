@@ -75,24 +75,24 @@ def main():
 
 
     updates = {
-        # General Overrides
         'logdir': '~/dreamer/dreamerv3/log_data/online_training_simple',
         'batch_size': 16,
         
-        # JAX Overrides (from size1m/debug, but simplified for clean look)
         'jax.prealloc': False,
         'jax.platform': 'cuda',
         
-        # Run Overrides (from your desired settings)
-        'run.train_ratio': 8, # Set back to 8 for simple environment/CPU use
+        # Keep it simple - Daydreamer used same params everywhere
+        'run.train_ratio': 8,
         'run.log_every': 60,
         'run.envs': 1,
         'run.eval_envs': 0,
         
-        # Agent Overrides (Entropy/Exploration)
-        # CRITICAL FIX: Use the actual key for action entropy coefficient
-        # This replaces the non-existent 'agent.entropy_coeff'
-        'agent.imag_loss.actent': 0.005, 
+        # Your current exploration is fine
+        'agent.imag_loss.actent': 0.007,
+        'agent.policy.minstd': 0.15,
+        
+        # ONLY add this based on Daydreamer insight:
+        'agent.reward_norm': 'off',  # Let sparse success bonuses have impact
     }
 
     if args_cli.from_checkpoint:
