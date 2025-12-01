@@ -35,7 +35,8 @@ class DreamerZMQClient:
         self.current_gripper_state = 0.0
         
         # Action normalization factors (computed from training data)
-        self.action_scale = np.array([0.041028, 0.055041, 0.046091, 13.39, 1.0])  # [x, y, z, wrist, gripper]
+        # Reduced to 5mm (0.005) for stability on 2025-11-30
+        self.action_scale = np.array([0.005, 0.005, 0.005, 2.0, 1.0])  # [x, y, z, wrist, gripper]
         
         # Workspace limits (adjust to your robot's workspace)
         self.pos_min = np.array([-2.0, -2.0, -2.0])
@@ -280,7 +281,7 @@ class DreamerZMQClient:
         obs = {}
         
         # Convert each observation to numpy array with batch dimension
-        for key in ['arm_joints', 'block_pose', 'target_pose', 'wrist_angle', 
+        for key in ['arm_joints', 'block_pose', 'actual_pose', 'wrist_angle', 
                     'gripper_state', 'left_contact', 'right_contact']:
             if key in obs_dict:
                 data = np.array(obs_dict[key], dtype=np.float32)
@@ -289,7 +290,7 @@ class DreamerZMQClient:
                 # Provide defaults if missing
                 if key == 'arm_joints':
                     obs[key] = np.zeros((1, 6), dtype=np.float32)
-                elif key in ['block_pose', 'target_pose']:
+                elif key in ['block_pose', 'actual_pose']:
                     obs[key] = np.zeros((1, 7), dtype=np.float32)
                 elif key == 'wrist_angle':
                     obs[key] = np.zeros((1, 1), dtype=np.float32)
@@ -306,7 +307,7 @@ class DreamerZMQClient:
     
     def _check_obs_complete(self, obs_dict):
         """Check if all required observations are present."""
-        required = ['arm_joints', 'block_pose', 'target_pose', 'wrist_angle',
+        required = ['arm_joints', 'block_pose', 'actual_pose', 'wrist_angle',
                    'gripper_state', 'left_contact', 'right_contact']
         return all(key in obs_dict for key in required)
     
@@ -337,20 +338,20 @@ class DreamerZMQClient:
                         print("\n[INFO] All observations received! Starting inference.")
                         print(f"[INFO] Initial state:")
                         print(f"  Block pose: {obs_dict.get('block_pose', 'missing')}")
-                        print(f"  Target pose: {obs_dict.get('target_pose', 'missing')[:3]}")
-                        print(f"  End-effector: {obs_dict.get('target_pose', 'missing')[:3]}")
+                        print(f"  Actual pose: {obs_dict.get('actual_pose', 'missing')[:3]}")
+                        print(f"  End-effector: {obs_dict.get('actual_pose', 'missing')[:3]}")
                         print(f"  Wrist angle: {obs_dict.get('wrist_angle', 'missing')}")
                         print(f"  Gripper: {obs_dict.get('gripper_state', 'missing')}")
                         print(f"  Contacts: L={obs_dict.get('left_contact', 'missing')} R={obs_dict.get('right_contact', 'missing')}")
                         self.initialized = True
                         # Initialize from observed state
-                        self.current_target_pos = np.array(obs_dict.get('target_pose', [0, 0, 0])[:3])
+                        self.current_target_pos = np.array(obs_dict.get('actual_pose', [0, 0, 0])[:3])
                         self.current_wrist_angle = obs_dict.get('wrist_angle', [0])[0]
                         self.current_gripper_state = obs_dict.get('gripper_state', [0])[0]
                     
                     # --- Closed-Loop Update ---
                     # Always update current state from observation to prevent drift
-                    observed_target = np.array(obs_dict.get('target_pose', [0]*7)[:3])
+                    observed_target = np.array(obs_dict.get('actual_pose', [0]*7)[:3])
                     # Simple validity check (avoid updating if target is all zeros/invalid)
                     if np.linalg.norm(observed_target) > 0.001:
                         self.current_target_pos = observed_target
@@ -389,42 +390,21 @@ class DreamerZMQClient:
                         action = action[0]
                     action = np.array(action, dtype=np.float32).flatten()
                     
-                    # Action is normalized delta: [dx, dy, dz, d_wrist, d_gripper]
-                    # Un-normalize
-                    delta = action * self.action_scale
-                    
-                    # --- Action Smoothing (EMA) ---
-                    # Initialize if needed
-                    if not hasattr(self, 'action_ema'):
-                        self.action_ema = delta[:4].copy()
-                    
-                    # Smoothing factor (0.0 = no smoothing, 1.0 = no update)
-                    # 0.3 means we take 30% of new action, 70% of old action
-                    alpha = 0.3 
-                    self.action_ema = alpha * delta[:4] + (1 - alpha) * self.action_ema
-                    
-                    # Use smoothed delta for arm, raw for gripper
-                    delta = np.concatenate([self.action_ema, delta[4:]])
-                    
-                    # Integrate
-                    new_pos = self.current_target_pos + delta[:3]
-                    new_wrist = self.current_wrist_angle + delta[3]
-                    new_gripper = np.clip(self.current_gripper_state + delta[4], 0.0, 1.0)
-                    
-                    # Apply workspace limits
-                    new_pos = np.clip(new_pos, self.pos_min, self.pos_max)
-                    new_wrist = np.clip(new_wrist, self.wrist_min, self.wrist_max)
-                    
                     # Package action for ROS bridge
-                    # Bridge expects [x, y, z, wrist, gripper] as absolute positions
+                    # Bridge expects NORMALIZED DELTAS [dx, dy, dz, dwrist, dgrip]
+                    # We compute smoothed normalized action
+                    
+                    # --- Action Smoothing (EMA) on NORMALIZED action ---
+                    if not hasattr(self, 'action_ema'):
+                        self.action_ema = action[:4].copy()
+                        
+                    alpha = 0.3
+                    self.action_ema = alpha * action[:4] + (1 - alpha) * self.action_ema
+                    
+                    smoothed_action = np.concatenate([self.action_ema, action[4:]])
+                    
                     action_msg = {
-                        "action": [
-                            float(new_pos[0]),
-                            float(new_pos[1]),
-                            float(new_pos[2]),
-                            float(new_wrist),
-                            float(new_gripper)
-                        ]
+                        "action": [float(x) for x in smoothed_action]
                     }
                     
                     # Send action to ROS bridge

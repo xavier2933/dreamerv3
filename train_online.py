@@ -15,6 +15,10 @@ warnings.filterwarnings('ignore', '.*truncated to dtype int32.*')
 import argparse
 import os
 
+'''
+TODO: make actions smaller, ensure that smaller actions are acceptable in unity bridge or control arbitrator
+'''
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--from_checkpoint', type=str, default=None, help='Path to checkpoint to load')

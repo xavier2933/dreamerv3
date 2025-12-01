@@ -9,26 +9,22 @@ import numpy as np
 from dreamerv3 import agent as agent_module
 import dreamerv3
 from embodied.envs import real_arm
-
 warnings.filterwarnings('ignore', '.*truncated to dtype int32.*')
-
 import argparse
 import os
 
+
 class FilterObs(embodied.Wrapper):
-    """
-    Filters out specific keys from the observation dictionary.
-    """
     def __init__(self, env, keys_to_remove):
         super().__init__(env)
         self._keys_to_remove = keys_to_remove
-        self._obs_space = {k: v for k, v in env.obs_space.items() 
+        self._obs_space = {k: v for k, v in env.obs_space.items()
                            if k not in keys_to_remove}
-        
+                           
     @property
     def obs_space(self):
         return self._obs_space
-        
+
     def step(self, action):
         obs = self.env.step(action)
         for k in self._keys_to_remove:
@@ -37,15 +33,14 @@ class FilterObs(embodied.Wrapper):
         return obs
 
 class SimplifyAction(embodied.Wrapper):
-    """
-    Restricts action space to XYZ only (3D).
-    Pads the output with zeros for wrist and gripper before sending to env.
-    """
+
     def __init__(self, env):
         super().__init__(env)
+
         # Original: 5 (dx, dy, dz, dwrist, dgrip)
         # New: 3 (dx, dy, dz)
         self._act_space = {
+
             'action': elements.Space(np.float32, (3,)),
             'reset': env.act_space['reset']
         }
@@ -58,6 +53,7 @@ class SimplifyAction(embodied.Wrapper):
         # Pad action with 0.0 for wrist and gripper
         if 'action' in action:
             act = action['action']
+
             # [dx, dy, dz] -> [dx, dy, dz, 0.0, 0.0]
             padded = np.concatenate([act, np.zeros(2, dtype=np.float32)], axis=0)
             action = action.copy()
@@ -67,6 +63,7 @@ class SimplifyAction(embodied.Wrapper):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--from_checkpoint', type=str, default=None, help='Path to checkpoint to load')
+
     args_cli = parser.parse_args()
     if args_cli.from_checkpoint:
         args_cli.from_checkpoint = os.path.expanduser(args_cli.from_checkpoint)
@@ -75,52 +72,60 @@ def main():
     root = pathlib.Path(dreamerv3.__file__).parent
     configs = elements.Path(root / 'configs.yaml').read()
     configs = yaml.YAML(typ='safe').load(configs)
-    
     config = elements.Config(configs['defaults'])
     config = config.update(configs['size1m'])
+
     updates = {
-        'logdir': '~/dreamer/dreamerv3/log_data/online_training_simple', # New logdir
-        'run.train_ratio': 32,
-        'run.log_every': 60,
+        # General Overrides
+        'logdir': '~/dreamer/dreamerv3/log_data/online_training_simple',
         'batch_size': 16,
+        
+        # JAX Overrides (from size1m/debug, but simplified for clean look)
         'jax.prealloc': False,
         'jax.platform': 'cuda',
+        
+        # Run Overrides (from your desired settings)
+        'run.train_ratio': 8, # Set back to 8 for simple environment/CPU use
+        'run.log_every': 60,
         'run.envs': 1,
         'run.eval_envs': 0,
+        
+        # Agent Overrides (Entropy/Exploration)
+        # CRITICAL FIX: Use the actual key for action entropy coefficient
+        # This replaces the non-existent 'agent.entropy_coeff'
+        'agent.imag_loss.actent': 0.005, 
     }
-    if args_cli.from_checkpoint:
-        updates['run.from_checkpoint'] = args_cli.from_checkpoint
-    config = config.update(updates)
 
+    if args_cli.from_checkpoint:
+
+        updates['run.from_checkpoint'] = args_cli.from_checkpoint
+
+    config = config.update(updates)
     logdir = elements.Path(config.logdir)
     logdir.mkdir()
     print('Logdir:', logdir)
     config.save(logdir / 'config.yaml')
 
     def make_env(config, index, **overrides):
+
         env = real_arm.RealArm(task='online_reach', hz=10.0)
         env = embodied.wrappers.TimeLimit(env, 1000)
-        
-        # Filter unused observations
-        # Removing: gripper_state, left_contact, right_contact
-        # Also removing: block_pose (irrelevant), wrist_angle (fixed)
-        # Keeping: target_pose (REQUIRED), arm_joints (useful for limits)
+
         keys_to_remove = ['gripper_state', 'left_contact', 'right_contact', 'block_pose', 'wrist_angle']
         env = FilterObs(env, keys_to_remove)
-        
-        # Simplify action space to XYZ only
+
         env = SimplifyAction(env)
-        
         return env
 
     def make_agent(config):
+
         env = make_env(config, 0)
         # Filter spaces
         notlog = lambda k: not k.startswith('log/')
         obs_space = {k: v for k, v in env.obs_space.items() if notlog(k)}
         act_space = {k: v for k, v in env.act_space.items() if k != 'reset'}
         env.close()
-        
+   
         # Create agent config
         agent_config = elements.Config(
             **config.agent,
@@ -135,12 +140,13 @@ def main():
             replicas=config.replicas,
         )
         agent = agent_module.Agent(obs_space, act_space, agent_config)
-        
+
         return agent
 
     def make_replay(config, folder, mode='train'):
         # Simplified replay creation
         directory = elements.Path(config.logdir) / folder
+
         replay = embodied.replay.Replay(
             length=config.batch_length + config.replay_context,
             capacity=int(1e5),
@@ -148,11 +154,14 @@ def main():
             online=True,
             chunksize=1024,
         )
+
         return replay
 
     def make_logger(config):
+
         step = elements.Counter()
         logdir = config.logdir
+
         outputs = [
             elements.logger.TerminalOutput(config.logger.filter, 'Agent'),
             elements.logger.JSONLOutput(logdir, 'metrics.jsonl'),
@@ -165,6 +174,7 @@ def main():
         consec = config.consec_train if mode == 'train' else config.consec_report
         fn = functools.partial(replay.sample, config.batch_size, mode)
         stream = embodied.streams.Stateless(fn)
+
         stream = embodied.streams.Consec(
             stream,
             length=length,
@@ -195,4 +205,5 @@ def main():
     )
 
 if __name__ == '__main__':
+
     main()

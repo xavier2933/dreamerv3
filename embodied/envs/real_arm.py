@@ -10,13 +10,10 @@ class RealArm(embodied.Env):
     def __init__(self, task, ip='127.0.0.1', port_sub=5556, port_pub=5557, hz=10.0):
         self.hz = hz
         self.rate_duration = 1.0 / hz
+    
+        # Reduced to 5mm (0.005) for stability on 2025-11-30
+        self.action_scale = np.array([0.005, 0.005, 0.005, 2.0, 1.0])
         
-        # Action scaling (must match inference.py)
-        # Action scaling (must match inference.py)
-        # Reduced by 50% on 2025-11-25 to improve precision
-        self.action_scale = np.array([0.0205, 0.0275, 0.0230, 13.39, 1.0])
-        
-        # Workspace limits
         # Workspace limits (Must match bridge.py clamping!)
         # Bridge: X[-0.2, 0.2], Y[0.15, 0.5], Z[0.2, 0.5]
         self.pos_min = np.array([-0.2, 0.15, 0.2])
@@ -48,7 +45,7 @@ class RealArm(embodied.Env):
         self._obs_space = {
             'arm_joints': elements.Space(np.float32, (6,)),
             'block_pose': elements.Space(np.float32, (7,)),
-            'target_pose': elements.Space(np.float32, (7,)),
+            'actual_pose': elements.Space(np.float32, (7,)),
             'wrist_angle': elements.Space(np.float32, (1,)),
             'gripper_state': elements.Space(np.float32, (1,)),
             'left_contact': elements.Space(np.float32, (1,)),
@@ -82,7 +79,7 @@ class RealArm(embodied.Env):
                 obs_dict = json.loads(msg_str)
                 
                 # Check completeness
-                required = ['arm_joints', 'block_pose', 'target_pose', 'wrist_angle',
+                required = ['arm_joints', 'block_pose', 'actual_pose', 'wrist_angle',
                            'gripper_state', 'left_contact', 'right_contact']
                 if all(k in obs_dict for k in required):
                     return obs_dict
@@ -118,8 +115,8 @@ class RealArm(embodied.Env):
         obs['is_terminal'] = False
         
         # Update internal state for integration
-        if 'target_pose' in obs_dict:
-            self.current_target_pos = np.array(obs_dict['target_pose'][:3])
+        if 'actual_pose' in obs_dict:
+            self.current_target_pos = np.array(obs_dict['actual_pose'][:3])
         if 'wrist_angle' in obs_dict:
             self.current_wrist_angle = obs_dict['wrist_angle'][0]
         if 'gripper_state' in obs_dict:

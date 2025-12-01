@@ -69,7 +69,8 @@ class DreamerRosBridge(Node):
         obs_header = ["time_sec", "time_ns", 
                       "joint_1", "joint_2", "joint_3", "joint_4", "joint_5", "joint_6", "joint_7", 
                       "block_x", "block_y", "block_z", "block_qx", "block_qy", "block_qz", "block_qw",
-                      "target_x", "target_y", "target_z", "target_qx", "target_qy", "target_qz", "target_qw",
+                      "block_x", "block_y", "block_z", "block_qx", "block_qy", "block_qz", "block_qw",
+                      "actual_x", "actual_y", "actual_z", "actual_qx", "actual_qy", "actual_qz", "actual_qw",
                       "wrist_angle", "gripper_state", "left_contact", "right_contact"]
         self.obs_csv_writer.writerow(obs_header)
         
@@ -83,7 +84,7 @@ class DreamerRosBridge(Node):
         self.data_cache = {
             "arm_joints": [np.nan] * 7, # Assuming 7 joints
             "block_pose": [np.nan] * 7,
-            "target_pose": [np.nan] * 7,
+            "actual_pose": [np.nan] * 7,
             "wrist_angle": [np.nan],
             "gripper_state": [np.nan],
             "left_contact": [np.nan],
@@ -96,7 +97,8 @@ class DreamerRosBridge(Node):
         # === ROS Subscriptions (collecting observations) ===
         self.create_subscription(JointState, "/joint_states", self.cb_joint_states, 10)
         self.create_subscription(Pose, "/block_pose", self.cb_block_pose, 10)
-        self.create_subscription(Pose, "/target_pose", self.cb_target_pose, 10)
+        # self.create_subscription(Pose, "/target_pose", self.cb_target_pose, 10) # Replaced by actual_pose
+        self.create_subscription(Pose, "/actual_end_effector_pose", self.cb_actual_pose, 10)
         self.create_subscription(Float32, "/wrist_angle", self.cb_wrist_angle, 10)
         self.create_subscription(Bool, "/gripper_command", self.cb_gripper_state, 10)
         self.create_subscription(Bool, "/left_contact_detected", self.cb_left_contact, 10)
@@ -130,8 +132,8 @@ class DreamerRosBridge(Node):
         self.current_gripper = 0.0 # Track gripper state (0.0 = closed, 1.0 = open)
         
         # Action scaling based on demo statistics
-        self.position_delta_scale = 0.05  # 5cm per unit action
-        self.wrist_delta_scale = 2.0      # 2° per unit action
+        self.position_delta_scale = 0.005  # 5mm per unit action (Reduced from 5cm for stability)
+        self.wrist_delta_scale = 2.0       # 2° per unit action
         
         # Debug tracking
         self.received_topics = set()
@@ -166,12 +168,6 @@ class DreamerRosBridge(Node):
             ros_y = t.transform.translation.y
             ros_z = t.transform.translation.z
             
-            # Convert ROS -> Unity
-            # UnityMoveItTrajectoryBridge logic: ros_x = unity_z, ros_y = -unity_x, ros_z = unity_y
-            # Inverse:
-            # unity_x = -ros_y
-            # unity_y = ros_z
-            # unity_z = ros_x
             
             unity_x = -ros_y
             unity_y = ros_z
@@ -200,7 +196,7 @@ class DreamerRosBridge(Node):
         row = timestamp + \
               self.data_cache["arm_joints"] + \
               self.data_cache["block_pose"] + \
-              self.data_cache["target_pose"] + \
+              self.data_cache["actual_pose"] + \
               self.data_cache["wrist_angle"] + \
               self.data_cache["gripper_state"] + \
               self.data_cache["left_contact"] + \
@@ -230,18 +226,26 @@ class DreamerRosBridge(Node):
             self.received_topics.add("block_pose")
             self.get_logger().info("✓ Receiving block_pose")
     
-    def cb_target_pose(self, msg: Pose):
+    def cb_actual_pose(self, msg: Pose):
         current_time = self.get_clock().now()
-        data = pose_to_array(msg)
-        self.obs_cache["target_pose"] = data
-        self.data_cache["target_pose"] = data
         
-        # DON'T update self.current_target_pos here - it creates a feedback loop
+        # Transform ROS position to Unity frame
+        # ROS: x, y, z -> Unity: -y, z, x
+        ros_p = msg.position
+        unity_x = -ros_p.y
+        unity_y = ros_p.z
+        unity_z = ros_p.x
+        
+        o = msg.orientation
+        data = [unity_x, unity_y, unity_z, o.x, o.y, o.z, o.w]
+        
+        self.obs_cache["actual_pose"] = data
+        self.data_cache["actual_pose"] = data
         
         self.log_observation(current_time)
-        if "target_pose" not in self.received_topics:
-            self.received_topics.add("target_pose")
-            self.get_logger().info("✓ Receiving target_pose")
+        if "actual_pose" not in self.received_topics:
+            self.received_topics.add("actual_pose")
+            self.get_logger().info("✓ Receiving actual_pose (transformed to Unity frame)")
     
     def cb_wrist_angle(self, msg: Float32):
         current_time = self.get_clock().now()
@@ -301,7 +305,7 @@ class DreamerRosBridge(Node):
             msg = json.dumps(self.obs_cache)
             self.pub.send_string(msg)
             
-            required = ["arm_joints", "block_pose", "target_pose", "wrist_angle", 
+            required = ["arm_joints", "block_pose", "actual_pose", "wrist_angle", 
                         "gripper_state", "left_contact", "right_contact"]
             if all(k in self.obs_cache for k in required) and "_logged_complete" not in self.received_topics:
                 self.get_logger().info("✓ Sending complete observation set to Dreamer")
@@ -373,11 +377,6 @@ class DreamerRosBridge(Node):
         new_z = self.current_target_pos[2] + dz
         new_wrist = self.current_wrist + dwrist
         
-        # Accumulate gripper state (0.0 to 1.0)
-        # Assuming grip_delta is also normalized [-1, 1] or similar?
-        # Cleaner.py says: actions[:, 4] is gripper (binary), keep as-is.
-        # But cleaner.py does: actions = np.diff(eff, ...).
-        # So it IS a delta. If it was 0->1, delta is 1. If 1->0, delta is -1.
         self.current_gripper += grip_delta
         self.current_gripper = np.clip(self.current_gripper, 0.0, 1.0)
         
