@@ -83,34 +83,35 @@ class MoveAndGraspReward:
 class SimpleReachReward:
     def __init__(self, target_pos=np.array([0.1, 0.35, 0.35])):
         self.target_pos = np.array(target_pos)
-        self.best_distance = float('inf')
-        self.episode_start_distance = None
-        
+
     def reset(self):
-        self.best_distance = float('inf')
-        self.episode_start_distance = None
-        print(f"[SimpleReachReward] Reset - Target: {self.target_pos}")
-        
+        print("[SmoothReachReward] Target:", self.target_pos)
+
     def __call__(self, obs):
         if 'actual_pose' not in obs:
             return 0.0
-            
+
         current_pos = np.atleast_1d(obs['actual_pose'])[:3]
         distance = np.linalg.norm(current_pos - self.target_pos)
-        
-        # Track starting distance for normalization
-        if self.episode_start_distance is None:
-            self.episode_start_distance = distance
-        
-        # Daydreamer-style: Reward CUMULATIVE progress from start
-        # This is sparse but meaningful
-        progress_from_start = self.episode_start_distance - distance
-        reward = progress_from_start  # Simple linear reward for progress
-        
-        # Success bonus (sparse but impactful)
-        if distance < 0.02:  # 2cm
-            reward += 5.0
-            if distance < 0.01:  # 1cm - precise
-                reward += 10.0
-        
-        return float(reward)
+
+        # 1. Linear shaping: mild, stable
+        shaping = -3.0 * distance    # -3 per meter, -0.03 per cm
+
+        # 2. Smooth proximity signal for Dreamer’s critic
+        proximity = np.exp(-6.0 * distance)
+
+        # 3. Small "hold position" reward inside 4 cm
+        # This reduces drift and kills catastrophic runs.
+        hold_bonus = 0.0
+        if distance < 0.04:
+            hold_bonus += 0.02      # tiny & stable
+
+        # 4. Reaching bonuses (stable, not too sharp)
+        bonus = 0.0
+        if distance < 0.02:
+            bonus += 1.0            # 2 cm
+        if distance < 0.01:
+            bonus += 2.0            # 1 cm
+
+        return float(shaping + proximity + hold_bonus + bonus)
+

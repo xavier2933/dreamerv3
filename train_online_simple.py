@@ -8,7 +8,7 @@ import embodied
 import numpy as np
 from dreamerv3 import agent as agent_module
 import dreamerv3
-from embodied.envs import real_arm
+from embodied.envs import real_arm, eval_real_arm
 warnings.filterwarnings('ignore', '.*truncated to dtype int32.*')
 import argparse
 import os
@@ -76,23 +76,23 @@ def main():
 
     updates = {
         'logdir': '~/dreamer/dreamerv3/log_data/online_training_simple',
-        'batch_size': 16,
+        'batch_size': 32,
         
         'jax.prealloc': False,
         'jax.platform': 'cuda',
         
         # Keep it simple - Daydreamer used same params everywhere
-        'run.train_ratio': 8,
+        'run.train_ratio': 4,
         'run.log_every': 60,
         'run.envs': 1,
         'run.eval_envs': 0,
         
-        # Your current exploration is fine
-        'agent.imag_loss.actent': 0.007,
-        'agent.policy.minstd': 0.15,
+        # Boost exploration to fix policy collapse
+        'agent.imag_loss.actent': 0.002,
+        'agent.policy.minstd': 0.1,
         
         # ONLY add this based on Daydreamer insight:
-        'agent.reward_norm': 'off',  # Let sparse success bonuses have impact
+        'agent.retnorm.impl': 'none',
     }
 
     if args_cli.from_checkpoint:
@@ -108,7 +108,7 @@ def main():
         env = real_arm.RealArm(task='online_reach', hz=10.0)
         env = embodied.wrappers.TimeLimit(env, 1000)
 
-        keys_to_remove = ['gripper_state', 'left_contact', 'right_contact', 'block_pose', 'wrist_angle']
+        keys_to_remove = ['target_pose', 'wrist_angle','gripper_state', 'left_contact', 'right_contact', 'block_pose', 'wrist_angle']
         env = FilterObs(env, keys_to_remove)
 
         env = SimplifyAction(env)
