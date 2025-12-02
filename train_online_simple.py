@@ -85,7 +85,8 @@ def main():
         'run.train_ratio': 4,
         'run.log_every': 60,
         'run.envs': 1,
-        'run.eval_envs': 0,
+        'run.eval_envs': 1,
+        'run.eval_eps': 1,
         
         # Boost exploration to fix policy collapse
         'agent.imag_loss.actent': 0.002,
@@ -103,16 +104,24 @@ def main():
     print('Logdir:', logdir)
     config.save(logdir / 'config.yaml')
 
-    def make_env(config, index, **overrides):
+    def make_env(config, index, mode='train', **overrides):
+        if mode == 'train':
+            env = real_arm.RealArm(task='online_reach', hz=10.0)
+            env = embodied.wrappers.TimeLimit(env, 1000)
+        else:
+            # Evaluation mode: safe, offline, no robot commands
+            real = real_arm.RealArm(task='online_reach', hz=10.0)
+            env = EvalRealArm(real)
+            env = embodied.wrappers.TimeLimit(env, 200)
 
-        env = real_arm.RealArm(task='online_reach', hz=10.0)
-        env = embodied.wrappers.TimeLimit(env, 1000)
-
-        keys_to_remove = ['target_pose', 'wrist_angle','gripper_state', 'left_contact', 'right_contact', 'block_pose', 'wrist_angle']
+        keys_to_remove = [
+            'gripper_state', 'left_contact', 'right_contact',
+            'block_pose', 'wrist_angle'
+        ]
         env = FilterObs(env, keys_to_remove)
-
         env = SimplifyAction(env)
         return env
+
 
     def make_agent(config):
 
@@ -182,6 +191,9 @@ def main():
         )
         return stream
 
+    def env_fn(index=0, mode='train'):
+        return make_env(config, index, mode)
+
     args = elements.Config(
         **config.run,
         logdir=config.logdir,
@@ -195,7 +207,7 @@ def main():
     embodied.run.train(
         functools.partial(make_agent, config),
         functools.partial(make_replay, config, 'replay'),
-        functools.partial(make_env, config),
+        env_fn,
         functools.partial(make_stream, config),
         functools.partial(make_logger, config),
         args
