@@ -77,22 +77,16 @@ def main():
     updates = {
         'logdir': '~/dreamer/dreamerv3/log_data/online_training_simple',
         'batch_size': 32,
-        
         'jax.prealloc': False,
         'jax.platform': 'cuda',
-        
-        # Keep it simple - Daydreamer used same params everywhere
         'run.train_ratio': 4,
         'run.log_every': 60,
         'run.envs': 1,
         'run.eval_envs': 1,
+        'run.report_every': 1000,   # how often to run eval (train_eval uses report_every)
         'run.eval_eps': 1,
-        
-        # Boost exploration to fix policy collapse
-        'agent.imag_loss.actent': 0.002,
-        'agent.policy.minstd': 0.1,
-        
-        # ONLY add this based on Daydreamer insight:
+        'agent.imag_loss.actent': 0.01,
+        'agent.policy.minstd': 0.3,
         'agent.retnorm.impl': 'none',
     }
 
@@ -107,11 +101,11 @@ def main():
     def make_env(config, index, mode='train', **overrides):
         if mode == 'train':
             env = real_arm.RealArm(task='online_reach', hz=10.0)
-            env = embodied.wrappers.TimeLimit(env, 1000)
+            env = embodied.wrappers.TimeLimit(env, 200)
         else:
             # Evaluation mode: safe, offline, no robot commands
             real = real_arm.RealArm(task='online_reach', hz=10.0)
-            env = EvalRealArm(real)
+            env = eval_real_arm.EvalRealArm(real)
             env = embodied.wrappers.TimeLimit(env, 200)
 
         keys_to_remove = [
@@ -191,8 +185,11 @@ def main():
         )
         return stream
 
-    def env_fn(index=0, mode='train'):
-        return make_env(config, index, mode)
+    def make_train_env(index):
+        return make_env(config, index, mode='train')
+
+    def make_eval_env(index):
+        return make_env(config, index, mode='eval')
 
     args = elements.Config(
         **config.run,
@@ -204,14 +201,17 @@ def main():
         from_checkpoint_regex='.*',
     )
 
-    embodied.run.train(
+    embodied.run.train_eval(
         functools.partial(make_agent, config),
-        functools.partial(make_replay, config, 'replay'),
-        env_fn,
+        functools.partial(make_replay, config, 'replay_train'),
+        functools.partial(make_replay, config, 'replay_eval'),
+        make_train_env,
+        make_eval_env,
         functools.partial(make_stream, config),
         functools.partial(make_logger, config),
         args
     )
+
 
 if __name__ == '__main__':
 
