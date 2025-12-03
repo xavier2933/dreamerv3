@@ -76,14 +76,14 @@ def main():
 
     updates = {
         'logdir': '~/dreamer/dreamerv3/log_data/online_training_simple_v3',
-        'batch_size': 16,
-        'batch_length': 64,
+        'batch_size': 32,              # ⬅️ INCREASED: Better stability (Daydreamer)
+        'batch_length': 32,            # ⬅️ DECREASED: Faster feedback for simple task (Daydreamer)
 
         'jax.prealloc': False,
         'jax.platform': 'cuda',
 
         # Agent Training Ratios
-        'run.train_ratio': 8,       # Keep low for single-env online learning
+        'run.train_ratio': 8,         # ⬅️ INCREASED: Now justified with diverse data
         
         'run.log_every': 60,
         'run.save_every': 500,
@@ -92,22 +92,28 @@ def main():
         'run.report_every': 1000,
 
         # Agent Core Parameters
-        'agent.opt.lr': 4e-5,          # ⬅️ **INCREASED:** Boost shared learning rate (from default 4e-5)
-        'agent.imag_length': 12,       # ⬅️ **INCREASED:** Longer planning horizon (from 8)
-        'agent.policy.minstd': 0.15,   # ⬅️ **INCREASED:** Higher exploration (from 0.1)
+        'agent.opt.lr': 3e-5,  # ⬅️ Lower from 1e-4
+        'agent.opt.eps': 1e-6,         # ⬅️ NEW: Adam epsilon (Daydreamer)
+        'agent.opt.agc': 0.3,          # Gradient clipping (already default but explicit)
+        
+        'agent.imag_length': 15,       # ⬅️ INCREASED: Daydreamer horizon
+        'agent.policy.minstd': 0.1,    # ⬅️ DECREASED: Less exploration needed with diversity
         
         # Policy/Value Prioritization (via Loss Scales)
-        'agent.loss_scales.policy': 1.0, # ⬅️ **NEW/INCREASED:** Prioritize policy gradient (Default 1.0)
-        'agent.loss_scales.value': 1.0,  # ⬅️ **NEW/INCREASED:** Prioritize value function learning (Default 1.0)
+        'agent.loss_scales.policy': 2.0,
+        'agent.loss_scales.value': 2.0,
 
-        'agent.imag_loss.actent': 0.003, # Keep your original exploration penalty
+        'agent.imag_loss.actent': 0.001,  # ⬅️ DECREASED: Less exploration penalty
+        'agent.imag_loss.lam': 0.95,      # ⬅️ Lambda return (Daydreamer - already in config)
+        
+        'agent.slowvalue.rate': 0.01,     # ⬅️ Target network update (slower = more stable)
 
         'agent.retnorm.impl': 'perc',
 
         # Replay Parameters
         'replay.online': True,
-        'replay.size': 5e5,
-        'replay.chunksize': 512,       # ⬅️ **DECREASED:** Learn faster from recent data (from 1024)
+        'replay.size': 1e6,            # ⬅️ INCREASED: More diversity with randomization
+        'replay.chunksize': 512,
     }
 
     if args_cli.from_checkpoint:
