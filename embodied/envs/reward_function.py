@@ -83,12 +83,9 @@ class MoveAndGraspReward:
 class SimpleReachReward:
     def __init__(self, target_pos=np.array([0.1, 0.35, 0.35])):
         self.target_pos = np.array(target_pos)
-        # ⬅️ Added state for tracking progress
-        self.best_distance = float('inf') 
 
     def reset(self):
-        print("[SmoothReachReward] Target:", self.target_pos)
-        self.best_distance = float('inf') # Reset best distance
+        print("[SimpleReachReward] Target:", self.target_pos)
 
     def __call__(self, obs):
         if 'actual_pose' not in obs:
@@ -99,33 +96,20 @@ class SimpleReachReward:
         
         reward = 0.0
 
-        # 1. Exponential Proximity: Sharp, smooth signal toward goal
-        # Increased factor from -6.0 to -10.0 for sharper falloff
+        # 1. Exponential Proximity: Main dense shaping signal
         proximity = np.exp(-10.0 * distance)
         reward += proximity
         
-        # 2. Progress Bonus: Reward movement that is closer than ever before
-        if distance < self.best_distance:
-            if self.best_distance != float('inf'): # ⬅️ ADD THIS CHECK
-                progress_bonus = 1.0 * (self.best_distance - distance)
-                reward += progress_bonus
-                
-            self.best_distance = distance
+        # 2. Hold Bonus: Encourages staying at target
+        if distance < 0.04:  # within 4 cm
+            reward += 0.5
         
-        # 3. Hold Bonus: Encourages stable position holding
-        hold_bonus = 0.0
-        if distance < 0.04: # within 4 cm
-            hold_bonus += 0.1          # Increased from 0.02
-        
-        reward += hold_bonus
-
-        # 4. Final Success Bonuses
-        if distance < 0.02: # within 2 cm
+        # 3. Success Bonuses: Strong terminal rewards
+        if distance < 0.02:  # within 2 cm
             reward += 1.0
-        if distance < 0.01: # within 1 cm
+        if distance < 0.01:  # within 1 cm
             reward += 2.0
             
-        MAX_REWARD_CAP = 4.0 
-        
-        # Ensure the returned value is a float and is capped
-        return float(np.clip(reward, 0.0, MAX_REWARD_CAP))
+        return float(reward)
+
+
