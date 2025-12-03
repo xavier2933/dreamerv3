@@ -115,6 +115,10 @@ class DreamerRosBridge(Node):
         # Cache for sending complete obs set to Dreamer via ZeroMQ (original purpose)
         self.obs_cache = {} 
 
+        self.is_resetting = False
+        self.reset_timer = None
+        self.reset_start_time = None
+
         # === ZeroMQ sockets ===
         ctx = zmq.Context()
         self.pub = ctx.socket(zmq.PUB)
@@ -173,6 +177,16 @@ class DreamerRosBridge(Node):
             unity_y = ros_z
             unity_z = ros_x
             
+            # Check for stale data (older than 1.0s)
+            # This prevents using the pre-reset pose immediately after reset
+            now = self.get_clock().now()
+            msg_time = Time.from_msg(t.header.stamp)
+            age = (now - msg_time).nanoseconds / 1e9
+            
+            if age > 1.0:
+                self.get_logger().warn(f"⚠️ Stale transform detected (age: {age:.2f}s). Waiting for fresh pose...")
+                return False
+
             self.current_target_pos = np.array([unity_x, unity_y, unity_z])
             
             # Initialize wrist if not yet set from topic
@@ -180,7 +194,7 @@ class DreamerRosBridge(Node):
                 self.current_wrist = 0.0
                 self.get_logger().info("ℹ Defaulting start wrist to 0.0")
             
-            self.get_logger().info(f"✓ Initialized start pose from TF:")
+            self.get_logger().info(f"✓ Initialized start pose from TF (age: {age:.3f}s):")
             self.get_logger().info(f"  ROS:   [{ros_x:.3f}, {ros_y:.3f}, {ros_z:.3f}]")
             self.get_logger().info(f"  Unity: [{unity_x:.3f}, {unity_y:.3f}, {unity_z:.3f}]")
             return True
@@ -293,10 +307,63 @@ class DreamerRosBridge(Node):
             self.received_topics.add("right_contact")
             self.get_logger().info("✓ Receiving right_contact")
 
+    def start_reset_sequence(self):
+        """Initialize the reset sequence without blocking."""
+        self.is_resetting = True
+        self.reset_start_time = self.get_clock().now()
+        
+        # 1. Disable autonomous mode immediately
+        false_msg = Bool()
+        false_msg.data = False
+        self.pub_aut.publish(false_msg)
+        
+        # 2. Schedule reset signal for 0.5 seconds from now
+        self.reset_signal_timer = self.create_timer(0.5, self.send_reset_signal)
+        
+        self.get_logger().info("↻ Reset sequence started (autonomous mode disabled)")
+    
+    def send_reset_signal(self):
+        """Send the actual reset command (called 0.5s after reset starts)."""
+        # Destroy the timer so it only fires once
+        if hasattr(self, 'reset_signal_timer'):
+            self.destroy_timer(self.reset_signal_timer)
+            self.reset_signal_timer = None
+        
+        reset_msg = Bool()
+        reset_msg.data = True
+        self.pub_reset.publish(reset_msg)
+        self.get_logger().info("↻ Reset signal sent")
+    
+    def check_reset_complete(self):
+        """Check if 3.5 seconds have elapsed since reset started."""
+        if not self.is_resetting:
+            return
+        
+        elapsed = (self.get_clock().now() - self.reset_start_time).nanoseconds / 1e9
+        
+        if elapsed >= 3.5:
+            # Re-enable autonomous mode
+            true_msg = Bool()
+            true_msg.data = True
+            self.pub_aut.publish(true_msg)
+            
+            # Re-initialize start pose from current TF instead of clearing
+            if not self.get_start_pose():
+                self.get_logger().warn("⚠️ Could not get start pose from TF after reset, will retry")
+                self.current_target_pos = None
+                self.current_wrist = None
+            
+            self.current_gripper = 0.0
+            
+            self.is_resetting = False
+            self.get_logger().info("↻ Reset complete - accepting actions again")
+
     # --- Timer and Action Publishing ---
     
     def timer_callback(self):
         # Try to initialize start pose if not done yet
+        self.check_reset_complete()
+
         if self.current_target_pos is None:
             self.get_start_pose()
 
@@ -317,36 +384,17 @@ class DreamerRosBridge(Node):
                 msg_str = self.sub.recv_string(flags=zmq.NOBLOCK)
                 data = json.loads(msg_str)
                 
+                # Handle reset command
                 if "reset" in data and data["reset"]:
-                    reset_msg = Bool()
-                    reset_msg.data = True
-
-                    false_msg = Bool()
-                    false_msg.data = False
-
-                    # 1. Publish false immediately
-                    self.pub_aut.publish(false_msg)
-
-                    # 2. Wait 0.5 seconds
-                    time.sleep(0.5)
-
-                    # 3. Publish TRUE reset
-                    self.pub_reset.publish(reset_msg)
-                    self.get_logger().info("↻ Reset command sent TRUE")
-
-                    # 4. Wait 3 seconds before allowing actions again
-                    time.sleep(3.0)
-                    self.pub_aut.publish(reset_msg)
-
-                    # 5. Clear states to force re-sync
-                    self.current_target_pos = None
-                    self.current_wrist = None
-                    self.current_gripper = 0.0
-
-                    self.get_logger().info("↻ Reset complete - waiting for TF sync") 
-                if "action" in data:
+                    self.start_reset_sequence()
+                    continue
+                    
+                # Process actions only if not resetting
+                if "action" in data and not self.is_resetting:
                     action = np.array(data["action"], dtype=np.float32)
                     self.publish_actions(action)
+                elif "action" in data and self.is_resetting:
+                    self.get_logger().debug("⏸ Ignoring action during reset")
         except zmq.Again:
             pass
 

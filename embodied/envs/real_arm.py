@@ -71,21 +71,6 @@ class RealArm(embodied.Env):
     def act_space(self):
         return self._act_space
 
-    def _receive_obs(self):
-        """Blocking receive of observation."""
-        while True:
-            try:
-                msg_str = self.sub.recv_string()
-                obs_dict = json.loads(msg_str)
-                
-                # Check completeness - removed block_pose from strict requirement
-                required = ['arm_joints', 'actual_pose', 'wrist_angle',
-                           'gripper_state', 'left_contact', 'right_contact']
-                if all(k in obs_dict for k in required):
-                    return obs_dict
-            except Exception as e:
-                print(f"[RealArm] Error receiving obs: {e}")
-                time.sleep(0.1)
 
     def _parse_obs(self, obs_dict, is_first=False):
         obs = {}
@@ -158,20 +143,79 @@ class RealArm(embodied.Env):
         
         return self._parse_obs(obs_dict, is_first=False)
 
+    def _receive_obs(self, timeout_ms=5000):
+        """Blocking receive of observation with a custom timeout."""
+        self.sub.setsockopt(zmq.RCVTIMEO, timeout_ms)
+        while True:
+            try:
+                msg_str = self.sub.recv_string()
+                obs_dict = json.loads(msg_str)
+                
+                # Check completeness - removed block_pose from strict requirement
+                required = ['arm_joints', 'actual_pose', 'wrist_angle',
+                            'gripper_state', 'left_contact', 'right_contact']
+                if all(k in obs_dict for k in required):
+                    # Restore default timeout for subsequent calls (e.g., from step())
+                    self.sub.setsockopt(zmq.RCVTIMEO, 5000) 
+                    return obs_dict
+            except zmq.Again:
+                # This exception is raised if RCVTIMEO is set and no message arrives
+                self.sub.setsockopt(zmq.RCVTIMEO, 5000)
+                raise TimeoutError("Timeout waiting for observation during reset.")
+            except Exception as e:
+                print(f"[RealArm] Error receiving obs: {e}")
+                time.sleep(0.1)
+
     def reset(self):
         print("[RealArm] Resetting...")
         
         # Reset reward function state
         self.reward_fn.reset()
         
-        # Send reset command twice to ensure it goes through
+        # --- 1. Send reset command ---
         self.pub.send_string(json.dumps({"reset": True}))
-        time.sleep(2.0)
+        # Wait a very short moment for the command to be picked up by the bridge
+        time.sleep(0.1)
         
-        self.pub.send_string(json.dumps({"reset": True}))
-        time.sleep(2.0)
+        # --- 2. Clear all observations BEFORE and DURING the reset motion ---
+        print("[RealArm] Clearing stale/transient messages...")
         
-        obs_dict = self._receive_obs()
+        # Temporarily set a short timeout for polling
+        self.sub.setsockopt(zmq.RCVTIMEO, 100) # 100ms timeout
+        
+        clear_start_time = time.time()
+        # The bridge implements a 0.5s + 3.0s = 3.5s wait, use 4.0s to be safe
+        timeout_duration = 4.0 
+        
+        # Continuously poll and clear the socket until the motion is expected to be complete
+        msgs_cleared = 0
+        while (time.time() - clear_start_time) < timeout_duration:
+            try:
+                # Read without blocking until it times out (100ms)
+                # We don't need to parse the JSON, just drain the queue
+                self.sub.recv_string()
+                msgs_cleared += 1
+            except zmq.Again:
+                # Timeout occurred, meaning the queue is empty *for now*. 
+                # Keep looping until the total timeout is reached.
+                time.sleep(0.01) # Small sleep to avoid hogging the CPU
+                
+        print(f"[RealArm] Cleared {msgs_cleared} stale/transient messages.")
+        
+        # --- 3. Receive the guaranteed fresh observation ---
+        # Note: self._receive_obs() will automatically restore the 5000ms timeout.
+        print("[RealArm] Waiting for first post-reset observation...")
+        
+        try:
+            # Wait with a generous timeout for the first guaranteed fresh message
+            obs_dict = self._receive_obs(timeout_ms=10000) # 10 second safety timeout
+        except TimeoutError:
+            print("[RealArm] FATAL: Failed to receive post-reset observation.")
+            # Depending on your setup, you might want to exit or raise here.
+            raise
+        
         self.step_count = 0
+        
+        print("[RealArm] Reset complete and current pose confirmed!")
         return self._parse_obs(obs_dict, is_first=True)
 
