@@ -83,9 +83,12 @@ class MoveAndGraspReward:
 class SimpleReachReward:
     def __init__(self, target_pos=np.array([0.1, 0.35, 0.35])):
         self.target_pos = np.array(target_pos)
+        # ⬅️ Added state for tracking progress
+        self.best_distance = float('inf') 
 
     def reset(self):
         print("[SmoothReachReward] Target:", self.target_pos)
+        self.best_distance = float('inf') # Reset best distance
 
     def __call__(self, obs):
         if 'actual_pose' not in obs:
@@ -93,25 +96,36 @@ class SimpleReachReward:
 
         current_pos = np.atleast_1d(obs['actual_pose'])[:3]
         distance = np.linalg.norm(current_pos - self.target_pos)
+        
+        reward = 0.0
 
-        # 1. Linear shaping: mild, stable
-        shaping = -3.0 * distance    # -3 per meter, -0.03 per cm
-
-        # 2. Smooth proximity signal for Dreamer’s critic
-        proximity = np.exp(-6.0 * distance)
-
-        # 3. Small "hold position" reward inside 4 cm
-        # This reduces drift and kills catastrophic runs.
+        # 1. Exponential Proximity: Sharp, smooth signal toward goal
+        # Increased factor from -6.0 to -10.0 for sharper falloff
+        proximity = np.exp(-10.0 * distance)
+        reward += proximity
+        
+        # 2. Progress Bonus: Reward movement that is closer than ever before
+        if distance < self.best_distance:
+            if self.best_distance != float('inf'): # ⬅️ ADD THIS CHECK
+                progress_bonus = 1.0 * (self.best_distance - distance)
+                reward += progress_bonus
+                
+            self.best_distance = distance
+        
+        # 3. Hold Bonus: Encourages stable position holding
         hold_bonus = 0.0
-        if distance < 0.04:
-            hold_bonus += 0.02      # tiny & stable
+        if distance < 0.04: # within 4 cm
+            hold_bonus += 0.1          # Increased from 0.02
+        
+        reward += hold_bonus
 
-        # 4. Reaching bonuses (stable, not too sharp)
-        bonus = 0.0
-        if distance < 0.02:
-            bonus += 1.0            # 2 cm
-        if distance < 0.01:
-            bonus += 2.0            # 1 cm
-
-        return float(shaping + proximity + hold_bonus + bonus)
-
+        # 4. Final Success Bonuses
+        if distance < 0.02: # within 2 cm
+            reward += 1.0
+        if distance < 0.01: # within 1 cm
+            reward += 2.0
+            
+        MAX_REWARD_CAP = 4.0 
+        
+        # Ensure the returned value is a float and is capped
+        return float(np.clip(reward, 0.0, MAX_REWARD_CAP))

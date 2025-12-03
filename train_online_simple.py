@@ -75,19 +75,39 @@ def main():
 
 
     updates = {
-        'logdir': '~/dreamer/dreamerv3/log_data/online_training_simple',
-        'batch_size': 32,
+        'logdir': '~/dreamer/dreamerv3/log_data/online_training_simple_v3',
+        'batch_size': 16,
+        'batch_length': 64,
+
         'jax.prealloc': False,
         'jax.platform': 'cuda',
-        'run.train_ratio': 4,
+
+        # Agent Training Ratios
+        'run.train_ratio': 8,       # Keep low for single-env online learning
+        
         'run.log_every': 60,
+        'run.save_every': 500,
         'run.envs': 1,
         'run.eval_envs': 1,
-        'run.report_every': 1000,   # how often to run eval (train_eval uses report_every)
-        'run.eval_eps': 1,
-        'agent.imag_loss.actent': 0.01,
-        'agent.policy.minstd': 0.3,
-        'agent.retnorm.impl': 'none',
+        'run.report_every': 1000,
+
+        # Agent Core Parameters
+        'agent.opt.lr': 4e-5,          # ⬅️ **INCREASED:** Boost shared learning rate (from default 4e-5)
+        'agent.imag_length': 12,       # ⬅️ **INCREASED:** Longer planning horizon (from 8)
+        'agent.policy.minstd': 0.15,   # ⬅️ **INCREASED:** Higher exploration (from 0.1)
+        
+        # Policy/Value Prioritization (via Loss Scales)
+        'agent.loss_scales.policy': 1.0, # ⬅️ **NEW/INCREASED:** Prioritize policy gradient (Default 1.0)
+        'agent.loss_scales.value': 1.0,  # ⬅️ **NEW/INCREASED:** Prioritize value function learning (Default 1.0)
+
+        'agent.imag_loss.actent': 0.003, # Keep your original exploration penalty
+
+        'agent.retnorm.impl': 'perc',
+
+        # Replay Parameters
+        'replay.online': True,
+        'replay.size': 5e5,
+        'replay.chunksize': 512,       # ⬅️ **DECREASED:** Learn faster from recent data (from 1024)
     }
 
     if args_cli.from_checkpoint:
@@ -144,17 +164,16 @@ def main():
         return agent
 
     def make_replay(config, folder, mode='train'):
-        # Simplified replay creation
         directory = elements.Path(config.logdir) / folder
-
+        
         replay = embodied.replay.Replay(
             length=config.batch_length + config.replay_context,
-            capacity=int(1e5),
+            capacity=int(config.replay.size),
             directory=directory,
-            online=True,
-            chunksize=1024,
+            online=config.replay.online,
+            chunksize=config.replay.chunksize,
         )
-
+        
         return replay
 
     def make_logger(config):
@@ -194,7 +213,7 @@ def main():
     args = elements.Config(
         **config.run,
         logdir=config.logdir,
-        batch_steps=config.batch_size * 16,
+        batch_steps=config.batch_size * 4,
         batch_size=config.batch_size,
         batch_length=config.batch_length,
         consec_report=config.consec_report,

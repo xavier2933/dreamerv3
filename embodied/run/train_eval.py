@@ -152,7 +152,10 @@ def train_eval(
       logger.add({'timer': elements.timer.stats()['summary']})
       logger.write()
 
+
     if should_save(step):
+      elements.print(f'[INFO] Triggering checkpoint save at step {step.value}')
+
       cp.save()
 
   logger.close()
