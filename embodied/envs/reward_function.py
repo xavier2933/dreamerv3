@@ -102,7 +102,7 @@ class SimpleReachReward:
         
         # 2. Hold Bonus: Encourages staying at target
         if distance < 0.04:  # within 4 cm
-            reward += 0.5
+            reward += 0.2
         
         # 3. Success Bonuses: Strong terminal rewards
         if distance < 0.02:  # within 2 cm
@@ -111,5 +111,6 @@ class SimpleReachReward:
             reward += 2.0
             
         return float(reward)
+
 
 
