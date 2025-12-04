@@ -101,8 +101,17 @@ class RealArm(embodied.Env):
         
         obs['reward'] = np.float32(reward)
         obs['is_first'] = is_first
-        obs['is_last'] = False
-        obs['is_terminal'] = False
+        
+        # Check for success from the reward function
+        is_success = getattr(self.reward_fn, 'is_success', False)
+        
+        if is_success:
+            print(f"[RealArm] Success detected! Terminating episode.")
+            obs['is_last'] = True
+            obs['is_terminal'] = True
+        else:
+            obs['is_last'] = False
+            obs['is_terminal'] = False
         
         # Update internal state for integration
         if 'actual_pose' in obs_dict:

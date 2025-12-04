@@ -85,6 +85,7 @@ class SimpleReachReward:
         self.target_pos = np.array(target_pos)
 
     def reset(self):
+        self.is_success = False
         print("[SimpleReachReward] Target:", self.target_pos)
 
     def __call__(self, obs):
@@ -94,7 +95,7 @@ class SimpleReachReward:
         current_pos = np.atleast_1d(obs['actual_pose'])[:3]
         distance = np.linalg.norm(current_pos - self.target_pos)
         
-        reward = 1.0 - 3.0 * distance   # scale factor 3.0 — adjust if too strong
+        reward = -distance   # scale factor 3.0 — adjust if too strong
 
         # 1. Exponential Proximity: Main dense shaping signal
         proximity = np.exp(-10.0 * distance)
@@ -102,11 +103,16 @@ class SimpleReachReward:
         
         # 2. Hold Bonus: Encourages staying at target
         if distance < 0.04:  # within 4 cm
-            reward += 0.5
+            reward += 0.3
         
         # 3. Success Bonuses: Strong terminal rewards
         if distance < 0.02:  # within 2 cm
             reward += 1.0
+            reward += 200.0 # Large success bonus to incentivize early termination
+            self.is_success = True
+        else:
+            self.is_success = False
+
         if distance < 0.01:  # within 1 cm
             reward += 2.0
             

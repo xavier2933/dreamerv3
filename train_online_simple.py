@@ -110,8 +110,8 @@ def main():
         'agent.imag_length': 3,
 
         # === Policy ===
-        'agent.policy.minstd': 0.02,
-        'agent.policy.maxstd': 0.10,
+        'agent.policy.minstd': 0.05,
+        'agent.policy.maxstd': 0.30,
 
         # === Loss Scaling ===
         'agent.loss_scales.policy': 2.0,
