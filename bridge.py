@@ -122,9 +122,9 @@ class DreamerRosBridge(Node):
         # === ZeroMQ sockets ===
         ctx = zmq.Context()
         self.pub = ctx.socket(zmq.PUB)
-        self.pub.bind("tcp://127.0.0.1:5556")
+        self.pub.bind("tcp://127.0.0.1:5558")
         self.sub = ctx.socket(zmq.SUB)
-        self.sub.bind("tcp://127.0.0.1:5557")
+        self.sub.bind("tcp://127.0.0.1:5559")
         self.sub.setsockopt_string(zmq.SUBSCRIBE, "")
 
         self.timer = self.create_timer(0.1, self.timer_callback)

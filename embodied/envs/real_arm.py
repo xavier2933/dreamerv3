@@ -7,7 +7,7 @@ import elements
 
 class RealArm(embodied.Env):
     
-    def __init__(self, task, ip='127.0.0.1', port_sub=5556, port_pub=5557, hz=10.0):
+    def __init__(self, task, ip='127.0.0.1', port_sub=5558, port_pub=5559, hz=10.0):
         self.hz = hz
         self.rate_duration = 1.0 / hz
     

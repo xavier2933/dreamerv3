@@ -94,7 +94,7 @@ class SimpleReachReward:
         current_pos = np.atleast_1d(obs['actual_pose'])[:3]
         distance = np.linalg.norm(current_pos - self.target_pos)
         
-        reward = 0.0
+        reward = 1.0 - 3.0 * distance   # scale factor 3.0 — adjust if too strong
 
         # 1. Exponential Proximity: Main dense shaping signal
         proximity = np.exp(-10.0 * distance)
