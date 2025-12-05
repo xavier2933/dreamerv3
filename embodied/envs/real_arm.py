@@ -16,15 +16,15 @@ class RealArm(embodied.Env):
         
         # Workspace limits (Must match bridge.py clamping!)
         # Bridge: X[-0.2, 0.2], Y[0.15, 0.5], Z[0.2, 0.5]
-        self.pos_min = np.array([-0.2, 0.15, 0.2])
-        self.pos_max = np.array([0.2, 0.5, 0.5])
+        self.pos_min = np.array([-0.2, 0.15, 0.25])
+        self.pos_max = np.array([0.2, 0.5, 0.55])
         self.wrist_min = -180.0
         self.wrist_max = 180.0
         
         # Reward Function
         from embodied.envs.reward_function import SimpleReachReward
         if target_pos is None:
-            target_pos = np.array([0.1, 0.35, 0.35])
+            target_pos = np.array([0.0, 0.325, 0.375])
         else:
             target_pos = np.array(target_pos)
             print(f"[RealArm] Overriding target position: {target_pos}")

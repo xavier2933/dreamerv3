@@ -138,6 +138,10 @@ class DreamerRosBridge(Node):
         # Action scaling based on demo statistics
         self.position_delta_scale = 0.02  # 2cm per unit action (Increased from 5mm for responsiveness)
         self.wrist_delta_scale = 2.0       # 2° per unit action
+
+        # Workspace limits (Unity Frame)
+        self.workspace_min = [-0.2, 0.15, 0.25]
+        self.workspace_max = [0.2, 0.5, 0.55]
         
         # Debug tracking
         self.received_topics = set()
@@ -442,9 +446,9 @@ class DreamerRosBridge(Node):
         
         # Clamp to workspace bounds (Unity Frame)
         # User specified: X[-0.2, 0.2], Y[0.15, 0.5], Z[0.2, 0.5]
-        new_x = np.clip(new_x, -0.2, 0.2)
-        new_y = np.clip(new_y, 0.15, 0.5)
-        new_z = np.clip(new_z, 0.2, 0.5)
+        new_x = np.clip(new_x, self.workspace_min[0], self.workspace_max[0])
+        new_y = np.clip(new_y, self.workspace_min[1], self.workspace_max[1])
+        new_z = np.clip(new_z, self.workspace_min[2], self.workspace_max[2])
         new_wrist = np.clip(new_wrist, -180.0, 180.0)
         
         # Update tracked position

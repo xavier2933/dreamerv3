@@ -79,7 +79,7 @@ def main():
         'logdir': '~/dreamer/dreamerv3/log_data/online_training_simple_v3',
         
         # === Core Efficiency ===
-        'batch_size': 16,
+        'batch_size': 32,
         'batch_length': 64,
         'report_length': 16,
 
@@ -88,7 +88,7 @@ def main():
         'jax.platform': 'cuda',
 
         # === Update frequency ===
-        'run.train_ratio': 12,
+        'run.train_ratio': 2,
         'run.log_every': 60,
         'run.save_every': 500,
         'run.envs': 1,
@@ -96,14 +96,14 @@ def main():
         'run.report_every': 1000,
 
         # === Optimizer ===
-        'agent.opt.lr': 1e-4,
+        'agent.opt.lr': 3e-5,
         'agent.opt.eps': 1e-6,
         'agent.opt.agc': 0.3,
         'agent.opt.warmup': 2000,
 
         # === Dreamer-Lite RSSM ===
-        'agent.dyn.rssm.deter': 64,
-        'agent.dyn.rssm.hidden': 128,   # default was 1024 → MUCH smaller
+        'agent.dyn.rssm.deter': 256,
+        'agent.dyn.rssm.hidden': 256,   # default was 1024 → MUCH smaller
         'agent.dyn.rssm.stoch': 16,
         'agent.dyn.rssm.classes': 4,    # category size → shrink
 
@@ -115,22 +115,22 @@ def main():
         'agent.policy.maxstd': 0.3,
 
         # === Loss Scaling ===
-        'agent.loss_scales.policy': 2.0,
-        'agent.loss_scales.value': 2.0,
+        'agent.loss_scales.policy': 1.0,
+        'agent.loss_scales.value': 1.0,
 
         # === Imagination Loss ===
         'agent.imag_loss.actent': 0.01,
         'agent.imag_loss.lam': 0.95,
 
         # === Slow Value Target ===
-        'agent.slowvalue.rate': 0.01,
+        'agent.slowvalue.rate': 0.005,
 
         # === Reward Normalization ===
         'agent.retnorm.impl': 'perc',
 
         # === Replay ===
         'replay.online': True,
-        'replay.size': 50000,       # small buffer works best
+        'replay.size': 500000,       # small buffer works best
         'replay.chunksize': 128,
     }
 
