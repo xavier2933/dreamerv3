@@ -61,6 +61,7 @@ class SimplifyAction(embodied.Wrapper):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--from_checkpoint', type=str, default=None, help='Path to checkpoint to load')
+    parser.add_argument('--target', type=float, nargs=3, default=None, help='Override target position [x, y, z]')
 
     args_cli = parser.parse_args()
     if args_cli.from_checkpoint:
@@ -76,7 +77,7 @@ def main():
     # config1
     updates = {
         'logdir': '~/dreamer/dreamerv3/log_data/online_training_simple_v3',
-
+        
         # === Core Efficiency ===
         'batch_size': 16,
         'batch_length': 64,
@@ -135,6 +136,7 @@ def main():
 
     if args_cli.from_checkpoint:
         updates['run.from_checkpoint'] = args_cli.from_checkpoint
+    
     config = config.update(updates)
     logdir = elements.Path(config.logdir)
     logdir.mkdir()
@@ -143,11 +145,11 @@ def main():
 
     def make_env(config, index, mode='train', **overrides):
         if mode == 'train':
-            env = real_arm.RealArm(task='online_reach', hz=10.0)
+            env = real_arm.RealArm(task='online_reach', hz=10.0, target_pos=args_cli.target)
             env = embodied.wrappers.TimeLimit(env, 200)
         else:
             # Evaluation mode: safe, offline, no robot commands
-            real = real_arm.RealArm(task='online_reach', hz=10.0)
+            real = real_arm.RealArm(task='online_reach', hz=10.0, target_pos=args_cli.target)
             env = eval_real_arm.EvalRealArm(real)
             env = embodied.wrappers.TimeLimit(env, 200)
 

@@ -7,7 +7,7 @@ import elements
 
 class RealArm(embodied.Env):
     
-    def __init__(self, task, ip='127.0.0.1', port_sub=5558, port_pub=5559, hz=10.0):
+    def __init__(self, task, ip='127.0.0.1', port_sub=5558, port_pub=5559, hz=10.0, target_pos=None):
         self.hz = hz
         self.rate_duration = 1.0 / hz
     
@@ -23,7 +23,13 @@ class RealArm(embodied.Env):
         
         # Reward Function
         from embodied.envs.reward_function import SimpleReachReward
-        self.reward_fn = SimpleReachReward(target_pos=np.array([0.1, 0.35, 0.35]))
+        if target_pos is None:
+            target_pos = np.array([0.1, 0.35, 0.35])
+        else:
+            target_pos = np.array(target_pos)
+            print(f"[RealArm] Overriding target position: {target_pos}")
+            
+        self.reward_fn = SimpleReachReward(target_pos=target_pos)
         
         # ZMQ Setup
         print(f"[RealArm] Connecting to ZMQ bridge at {ip}...")

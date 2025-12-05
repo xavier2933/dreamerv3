@@ -219,6 +219,22 @@ class DreamerRosBridge(Node):
         self.obs_csv_writer.writerow(row)
         self.obs_csv_file.flush()
 
+    def ros_to_unity_pose(self, ros_pose: Pose):
+        """
+        Convert ROS Pose to Unity coordinate frame.
+        Position: [x, y, z] -> [-y, z, x]
+        Orientation: [x, y, z, w] -> [y, -z, -x, w]
+        """
+        # Position
+        p = ros_pose.position
+        unity_pos = [-p.y, p.z, p.x]
+        
+        # Orientation
+        o = ros_pose.orientation
+        unity_quat = [o.y, -o.z, -o.x, o.w]
+        
+        return unity_pos + unity_quat
+
     # === Observation Callbacks ===
     def cb_joint_states(self, msg: JointState):
         current_time = self.get_clock().now()
@@ -232,26 +248,22 @@ class DreamerRosBridge(Node):
     
     def cb_block_pose(self, msg: Pose):
         current_time = self.get_clock().now()
-        data = pose_to_array(msg)
+        
+        # Transform block pose to Unity frame
+        data = self.ros_to_unity_pose(msg)
+        
         self.obs_cache["block_pose"] = data
         self.data_cache["block_pose"] = data
         self.log_observation(current_time)
         if "block_pose" not in self.received_topics:
             self.received_topics.add("block_pose")
-            self.get_logger().info("✓ Receiving block_pose")
+            self.get_logger().info("✓ Receiving block_pose (transformed to Unity frame)")
     
     def cb_actual_pose(self, msg: Pose):
         current_time = self.get_clock().now()
         
-        # Transform ROS position to Unity frame
-        # ROS: x, y, z -> Unity: -y, z, x
-        ros_p = msg.position
-        unity_x = -ros_p.y
-        unity_y = ros_p.z
-        unity_z = ros_p.x
-        
-        o = msg.orientation
-        data = [unity_x, unity_y, unity_z, o.x, o.y, o.z, o.w]
+        # Transform ROS position/orientation to Unity frame
+        data = self.ros_to_unity_pose(msg)
         
         self.obs_cache["actual_pose"] = data
         self.data_cache["actual_pose"] = data
