@@ -73,7 +73,7 @@ def main():
     config = elements.Config(configs['defaults'])
     config = config.update(configs['size1m'])
 
-
+    # config1
     updates = {
         'logdir': '~/dreamer/dreamerv3/log_data/online_training_simple_v3',
 
