@@ -78,8 +78,8 @@ def main():
         'logdir': '~/dreamer/dreamerv3/log_data/online_training_simple_v3',
 
         # === Core Efficiency ===
-        'batch_size': 8,
-        'batch_length': 16,
+        'batch_size': 16,
+        'batch_length': 64,
         'report_length': 16,
 
         # === JAX ===
@@ -95,7 +95,7 @@ def main():
         'run.report_every': 1000,
 
         # === Optimizer ===
-        'agent.opt.lr': 3e-5,
+        'agent.opt.lr': 1e-4,
         'agent.opt.eps': 1e-6,
         'agent.opt.agc': 0.3,
         'agent.opt.warmup': 2000,
@@ -107,18 +107,18 @@ def main():
         'agent.dyn.rssm.classes': 4,    # category size → shrink
 
         # === Imagination Horizon ===
-        'agent.imag_length': 3,
+        'agent.imag_length': 15,
 
         # === Policy ===
-        'agent.policy.minstd': 0.05,
-        'agent.policy.maxstd': 0.30,
+        'agent.policy.minstd': 0.1,
+        'agent.policy.maxstd': 0.3,
 
         # === Loss Scaling ===
         'agent.loss_scales.policy': 2.0,
         'agent.loss_scales.value': 2.0,
 
         # === Imagination Loss ===
-        'agent.imag_loss.actent': 0.001,
+        'agent.imag_loss.actent': 0.01,
         'agent.imag_loss.lam': 0.95,
 
         # === Slow Value Target ===

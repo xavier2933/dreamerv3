@@ -136,7 +136,7 @@ class DreamerRosBridge(Node):
         self.current_gripper = 0.0 # Track gripper state (0.0 = closed, 1.0 = open)
         
         # Action scaling based on demo statistics
-        self.position_delta_scale = 0.005  # 5mm per unit action (Reduced from 5cm for stability)
+        self.position_delta_scale = 0.02  # 2cm per unit action (Increased from 5mm for responsiveness)
         self.wrist_delta_scale = 2.0       # 2° per unit action
         
         # Debug tracking
