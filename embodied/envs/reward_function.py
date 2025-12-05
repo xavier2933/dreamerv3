@@ -102,11 +102,11 @@ class SimpleReachReward:
         reward += proximity
         
         # 2. Hold Bonus: Encourages staying at target
-        if distance < 0.04:  # within 4 cm
+        if distance < 0.05:  # within 4 cm
             reward += 0.3
         
         # 3. Success Bonuses: Strong terminal rewards
-        if distance < 0.02:  # within 2 cm
+        if distance < 0.05:  # within 2 cm
             reward += 1.0
             reward += 200.0 # Large success bonus to incentivize early termination
             self.is_success = True

@@ -78,16 +78,16 @@ def main():
         'logdir': '~/dreamer/dreamerv3/log_data/online_training_simple_v3',
 
         # === Core Efficiency ===
-        'batch_size': 8,
-        'batch_length': 16,
-        'report_length': 16,
+        'batch_size': 16,              # ⬅️ INCREASE from 8
+        'batch_length': 32,            # ⬅️ INCREASE from 16
+        'report_length': 32,           # ⬅️ Match batch_length
 
         # === JAX ===
         'jax.prealloc': False,
         'jax.platform': 'cuda',
 
         # === Update frequency ===
-        'run.train_ratio': 12,
+        'run.train_ratio': 16,         # ⬅️ INCREASE from 12 (tiny model can handle it)
         'run.log_every': 60,
         'run.save_every': 500,
         'run.envs': 1,
@@ -102,23 +102,23 @@ def main():
 
         # === Dreamer-Lite RSSM ===
         'agent.dyn.rssm.deter': 64,
-        'agent.dyn.rssm.hidden': 128,   # default was 1024 → MUCH smaller
+        'agent.dyn.rssm.hidden': 128,
         'agent.dyn.rssm.stoch': 16,
-        'agent.dyn.rssm.classes': 4,    # category size → shrink
+        'agent.dyn.rssm.classes': 4,
 
         # === Imagination Horizon ===
-        'agent.imag_length': 3,
+        'agent.imag_length': 5,        # ⬅️ INCREASE from 3 (need more lookahead)
 
         # === Policy ===
-        'agent.policy.minstd': 0.05,
-        'agent.policy.maxstd': 0.30,
+        'agent.policy.minstd': 0.05,   # Good (you already changed)
+        'agent.policy.maxstd': 0.30,   # Good (you already changed)
 
         # === Loss Scaling ===
-        'agent.loss_scales.policy': 2.0,
-        'agent.loss_scales.value': 2.0,
+        'agent.loss_scales.policy': 1.0,  # ⬅️ CRITICAL: Change from 2.0 (prevents divergence!)
+        'agent.loss_scales.value': 1.0,   # ⬅️ CRITICAL: Change from 2.0 (prevents divergence!)
 
         # === Imagination Loss ===
-        'agent.imag_loss.actent': 0.001,
+        'agent.imag_loss.actent': 0.005,
         'agent.imag_loss.lam': 0.95,
 
         # === Slow Value Target ===
@@ -129,8 +129,8 @@ def main():
 
         # === Replay ===
         'replay.online': True,
-        'replay.size': 50000,       # small buffer works best
-        'replay.chunksize': 128,
+        'replay.size': 1e5,            # ⬅️ INCREASE from 50k (early termination = more diverse episodes)
+        'replay.chunksize': 256,       # ⬅️ INCREASE from 128
     }
 
     if args_cli.from_checkpoint:
