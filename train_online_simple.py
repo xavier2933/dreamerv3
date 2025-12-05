@@ -80,7 +80,7 @@ def main():
         
         # === Core Efficiency ===
         'batch_size': 32,
-        'batch_length': 64,
+        'batch_length': 32,
         'report_length': 16,
 
         # === JAX ===
@@ -96,30 +96,34 @@ def main():
         'run.report_every': 1000,
 
         # === Optimizer ===
-        'agent.opt.lr': 3e-5,
+        'agent.opt.lr': 1e-4,
         'agent.opt.eps': 1e-6,
         'agent.opt.agc': 0.3,
         'agent.opt.warmup': 2000,
 
         # === Dreamer-Lite RSSM ===
-        'agent.dyn.rssm.deter': 256,
-        'agent.dyn.rssm.hidden': 256,   # default was 1024 → MUCH smaller
-        'agent.dyn.rssm.stoch': 16,
-        'agent.dyn.rssm.classes': 4,    # category size → shrink
+        'agent.dyn.rssm.deter': 512,
+        'agent.dyn.rssm.hidden': 512,   # default was 1024 → MUCH smaller
+        'agent.dyn.rssm.stoch': 32,
+        'agent.dyn.rssm.classes': 32,    # category size → shrink
 
         # === Imagination Horizon ===
         'agent.imag_length': 15,
 
         # === Policy ===
         'agent.policy.minstd': 0.1,
-        'agent.policy.maxstd': 0.3,
+        'agent.policy.maxstd': 1.0,
+        'agent.policy.unimix': 0.1,
+
 
         # === Loss Scaling ===
         'agent.loss_scales.policy': 1.0,
         'agent.loss_scales.value': 1.0,
+        'agent.loss_scales.rep': 1.0,
+        'agent.loss_scales.repval': 0.5,
 
         # === Imagination Loss ===
-        'agent.imag_loss.actent': 0.01,
+        'agent.imag_loss.actent': 0.2,
         'agent.imag_loss.lam': 0.95,
 
         # === Slow Value Target ===
