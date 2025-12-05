@@ -101,7 +101,7 @@ class SimpleReachReward:
         reward = -3.0 * distance  # -1.5 at 0.3m, -0.2 at 0.04m
         
         # Success bonus
-        if distance < 0.04:
+        if distance < 0.03:
             reward += 50.0
             self.is_success = True
         else:
