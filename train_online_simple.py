@@ -61,6 +61,7 @@ class SimplifyAction(embodied.Wrapper):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--from_checkpoint', type=str, default=None, help='Path to checkpoint to load')
+    parser.add_argument('--target', type=float, nargs=3, default=None, help='Override target position [x, y, z]')
 
     args_cli = parser.parse_args()
     if args_cli.from_checkpoint:
@@ -73,35 +74,69 @@ def main():
     config = elements.Config(configs['defaults'])
     config = config.update(configs['size1m'])
 
-
+    # config1
     updates = {
-        'batch_size': 16,           # ⬅️ Slightly larger
-        'batch_length': 32,         # ⬅️ Longer sequences
+        'logdir': '~/dreamer/dreamerv3/log_data/online_training_simple_v3',
         
-        'run.train_ratio': 16,      # ⬅️ Higher (you have less to learn)
-        
-        # Tiny RSSM (perfect for 13D input)
-        'agent.dyn.rssm.deter': 64,
-        'agent.dyn.rssm.hidden': 128,
-        'agent.dyn.rssm.stoch': 16,
-        'agent.dyn.rssm.classes': 4,
-        
-        'agent.imag_length': 8,     # ⬅️ Not too short (0.8s lookahead at 10Hz)
-        
+        # === Core Efficiency ===
+        'batch_size': 32,
+        'batch_length': 32,
+        'report_length': 16,
+
+        # === JAX ===
+        'jax.prealloc': False,
+        'jax.platform': 'cuda',
+
+        # === Update frequency ===
+        'run.train_ratio': 2,
+        'run.log_every': 60,
+        'run.save_every': 500,
+        'run.envs': 1,
+        'run.eval_envs': 1,
+        'run.report_every': 200,
+
+        # === Optimizer ===
+        'agent.opt.lr': 1e-4,
+        'agent.opt.eps': 1e-6,
+        'agent.opt.agc': 0.3,
+        'agent.opt.warmup': 1000,
+
+        # === Dreamer-Lite RSSM ===
+        'agent.dyn.rssm.deter': 512,
+        'agent.dyn.rssm.hidden': 512,   # default was 1024 → MUCH smaller
+        'agent.dyn.rssm.stoch': 32,
+        'agent.dyn.rssm.classes': 32,    # category size → shrink
+
+        # === Imagination Horizon ===
+        'agent.imag_length': 15,
+
+        # === Policy ===
         'agent.policy.minstd': 0.1,
-        
-        'agent.loss_scales.policy': 1.0,  # ⬅️ Keep stable!
+
+        # === Loss Scaling ===
+        'agent.loss_scales.policy': 1.0,
         'agent.loss_scales.value': 1.0,
-        
-        'agent.opt.lr': 3e-5,
-        'agent.imag_loss.actent': 0.001,
-        
-        'replay.size': 1e5,         # ⬅️ Medium buffer
-        'replay.chunksize': 256,
+        'agent.loss_scales.repval': 0.5,
+
+        # === Imagination Loss ===
+        'agent.imag_loss.actent': 0.4,
+        'agent.imag_loss.lam': 0.95,
+
+        # === Slow Value Target ===
+        'agent.slowvalue.rate': 0.01,
+
+        # === Reward Normalization ===
+        'agent.retnorm.impl': 'perc',
+
+        # === Replay ===
+        'replay.online': True,
+        'replay.size': 500000,       # small buffer works best
+        'replay.chunksize': 1024,
     }
 
     if args_cli.from_checkpoint:
         updates['run.from_checkpoint'] = args_cli.from_checkpoint
+    
     config = config.update(updates)
     logdir = elements.Path(config.logdir)
     logdir.mkdir()
@@ -110,11 +145,11 @@ def main():
 
     def make_env(config, index, mode='train', **overrides):
         if mode == 'train':
-            env = real_arm.RealArm(task='online_reach', hz=10.0)
+            env = real_arm.RealArm(task='online_reach', hz=10.0, target_pos=args_cli.target)
             env = embodied.wrappers.TimeLimit(env, 200)
         else:
             # Evaluation mode: safe, offline, no robot commands
-            real = real_arm.RealArm(task='online_reach', hz=10.0)
+            real = real_arm.RealArm(task='online_reach', hz=10.0, target_pos=args_cli.target)
             env = eval_real_arm.EvalRealArm(real)
             env = embodied.wrappers.TimeLimit(env, 200)
 

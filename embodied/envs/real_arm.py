@@ -7,23 +7,29 @@ import elements
 
 class RealArm(embodied.Env):
     
-    def __init__(self, task, ip='127.0.0.1', port_sub=5556, port_pub=5557, hz=10.0):
+    def __init__(self, task, ip='127.0.0.1', port_sub=5558, port_pub=5559, hz=10.0, target_pos=None):
         self.hz = hz
         self.rate_duration = 1.0 / hz
     
         # Reduced to 5mm (0.005) for stability on 2025-11-30
-        self.action_scale = np.array([0.005, 0.005, 0.005, 2.0, 1.0])
+        self.action_scale = np.array([0.02, 0.02, 0.02, 2.0, 1.0]) # Note: Scaling happens in bridge.py, this is just for reference
         
         # Workspace limits (Must match bridge.py clamping!)
         # Bridge: X[-0.2, 0.2], Y[0.15, 0.5], Z[0.2, 0.5]
-        self.pos_min = np.array([-0.2, 0.15, 0.2])
-        self.pos_max = np.array([0.2, 0.5, 0.5])
+        self.pos_min = np.array([-0.2, 0.15, 0.25])
+        self.pos_max = np.array([0.2, 0.5, 0.55])
         self.wrist_min = -180.0
         self.wrist_max = 180.0
         
         # Reward Function
         from embodied.envs.reward_function import SimpleReachReward
-        self.reward_fn = SimpleReachReward(target_pos=np.array([0.1, 0.35, 0.35]))
+        if target_pos is None:
+            target_pos = np.array([0.0, 0.325, 0.375])
+        else:
+            target_pos = np.array(target_pos)
+            print(f"[RealArm] Overriding target position: {target_pos}")
+            
+        self.reward_fn = SimpleReachReward(target_pos=target_pos)
         
         # ZMQ Setup
         print(f"[RealArm] Connecting to ZMQ bridge at {ip}...")
@@ -47,6 +53,7 @@ class RealArm(embodied.Env):
             'block_pose': elements.Space(np.float32, (7,)),
             'actual_pose': elements.Space(np.float32, (7,)),
             'wrist_angle': elements.Space(np.float32, (1,)),
+            'target_error': elements.Space(np.float32, (3,)),
             'gripper_state': elements.Space(np.float32, (1,)),
             'left_contact': elements.Space(np.float32, (1,)),
             'right_contact': elements.Space(np.float32, (1,)),
@@ -88,21 +95,39 @@ class RealArm(embodied.Env):
         
         # Ensure shapes match space
         for k, space in self._obs_space.items():
-            if k not in ['reward', 'is_first', 'is_last', 'is_terminal']:
+            if k not in ['reward', 'is_first', 'is_last', 'is_terminal', 'target_error']:
                 if k not in obs:
                     obs[k] = np.zeros(space.shape, dtype=space.dtype)
                 else:
-                    # Handle scalar vs vector mismatch
                     if obs[k].shape != space.shape:
                         obs[k] = obs[k].reshape(space.shape)
+
+        # --- CALCULATE TARGET ERROR ---
+        # Get current position (first 3 elements of actual_pose)
+        current_pos = obs.get('actual_pose', np.zeros(7))[:3]
+        target_pos = self.reward_fn.target_pos
+        
+        # Vector pointing FROM hand TO target
+        error_vector = target_pos - current_pos
+        obs['target_error'] = np.array(error_vector, dtype=np.float32)
+        # ------
 
         # Compute reward using stateful function
         reward = self.reward_fn(obs)
         
         obs['reward'] = np.float32(reward)
         obs['is_first'] = is_first
-        obs['is_last'] = False
-        obs['is_terminal'] = False
+        
+        # Check for success from the reward function
+        is_success = getattr(self.reward_fn, 'is_success', False)
+        
+        if is_success:
+            print(f"[RealArm] Success! Reward: {reward:.2f}")
+            obs['is_last'] = True
+            obs['is_terminal'] = True
+        else:
+            obs['is_last'] = False
+            obs['is_terminal'] = False
         
         # Update internal state for integration
         if 'actual_pose' in obs_dict:

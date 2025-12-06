@@ -83,34 +83,29 @@ class MoveAndGraspReward:
 class SimpleReachReward:
     def __init__(self, target_pos=np.array([0.1, 0.35, 0.35])):
         self.target_pos = np.array(target_pos)
+        self.is_success = False
 
     def reset(self):
+        self.is_success = False
         print("[SimpleReachReward] Target:", self.target_pos)
 
     def __call__(self, obs):
         if 'actual_pose' not in obs:
             return 0.0
-
         current_pos = np.atleast_1d(obs['actual_pose'])[:3]
-        distance = np.linalg.norm(current_pos - self.target_pos)
+        target_pos = self.target_pos
         
-        reward = 0.0
-
-        # 1. Exponential Proximity: Main dense shaping signal
-        proximity = np.exp(-10.0 * distance)
-        reward += proximity
+        distance = np.linalg.norm(current_pos - target_pos)
         
-        # 2. Hold Bonus: Encourages staying at target
-        if distance < 0.04:  # within 4 cm
-            reward += 0.2
+        # Single strong pull (adjust coefficient to taste)
+        reward = -3.0 * distance  # -1.5 at 0.3m, -0.2 at 0.04m
         
-        # 3. Success Bonuses: Strong terminal rewards
-        if distance < 0.02:  # within 2 cm
-            reward += 1.0
-        if distance < 0.01:  # within 1 cm
-            reward += 2.0
+        # Success bonus
+        if distance < 0.03:
+            reward += 50.0
+            self.is_success = True
+        else:
+            self.is_success = False
             
         return float(reward)
-
-
 
